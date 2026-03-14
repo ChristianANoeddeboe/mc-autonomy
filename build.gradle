@@ -19,12 +19,9 @@ repositories {
 }
 
 loom {
-	splitEnvironmentSourceSets()
-
 	mods {
-		"modid" {
+		"companion" {
 			sourceSet sourceSets.main
-			sourceSet sourceSets.client
 		}
 	}
 
@@ -44,7 +41,7 @@ dependencies {
 processResources {
 	inputs.property "version", project.version
 
-	filesMatching("fabric.mod.json") {
+	filesMatching(["fabric.mod.json", "companion.mixins.json"]) {
 		expand "version": inputs.properties.version
 	}
 }
