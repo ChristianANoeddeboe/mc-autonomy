@@ -28,9 +28,13 @@ import java.util.function.Consumer;
  */
 public class SidecarClient {
 
-    private static final String SIDECAR_URL = System.getProperty("companion.sidecarUrl",
-            "http://localhost:8765/decide");
     private static final int TIMEOUT_SECONDS = 5;
+
+    private String sidecarUrl() {
+        return "http://"
+                + com.example.companion.CompanionConfig.get().sidecarHost + ":"
+                + com.example.companion.CompanionConfig.get().sidecarPort + "/decide";
+    }
 
     private static final Gson GSON = new Gson();
 
@@ -48,7 +52,7 @@ public class SidecarClient {
         String body = GSON.toJson(worldState);
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(SIDECAR_URL))
+                .uri(URI.create(sidecarUrl()))
                 .timeout(Duration.ofSeconds(TIMEOUT_SECONDS))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))

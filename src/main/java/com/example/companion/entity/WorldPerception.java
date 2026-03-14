@@ -32,7 +32,7 @@ public final class WorldPerception {
     private WorldPerception() {}
 
     public static JsonObject serialize(CompanionEntity entity) {
-        return serialize(entity, DEFAULT_RADIUS);
+        return serialize(entity, com.example.companion.CompanionConfig.get().scanRadius);
     }
 
     public static JsonObject serialize(CompanionEntity entity, int radius) {

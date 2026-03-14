@@ -46,3 +46,4 @@ sidecar/*.pyc
 sidecar/.venv/
 sidecar/venv/
 sidecar/memory.json
+sidecar/sidecar_config.json

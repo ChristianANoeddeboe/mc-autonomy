@@ -25,23 +25,22 @@ Run with:
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from config import CONFIG
 from memory import MemoryStore
 from model_router import decide as ai_decide
 from models import GoalDecision, GoalType, WorldState
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, CONFIG.get("log_level", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Set to "true" to skip the AI call and always return IDLE (useful for Phase 1 testing)
-STUB_MODE = os.getenv("STUB_MODE", "true").lower() == "true"
+STUB_MODE: bool = CONFIG["stub_mode"]
 
 app = FastAPI(title="MC Companion Sidecar", version="0.1.0")
 memory = MemoryStore()

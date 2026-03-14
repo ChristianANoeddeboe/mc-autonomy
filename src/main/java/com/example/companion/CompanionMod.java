@@ -24,12 +24,6 @@ public class CompanionMod implements ModInitializer {
     public static final String MOD_ID = "companion";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    /** Prefix a player must use to address the companion in chat, e.g. "companion: go explore" */
-    public static final String CHAT_PREFIX = "companion";
-
-    /** Radius within which a chat message triggers a companion replan. */
-    private static final double CHAT_TRIGGER_RADIUS = 32.0;
-
     public static final EntityType<CompanionEntity> COMPANION_ENTITY_TYPE =
             Registry.register(
                     Registries.ENTITY_TYPE,
@@ -41,9 +35,14 @@ public class CompanionMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        CompanionConfig.load();
         CompanionCommands.register();
         registerChatListener();
-        LOGGER.info("Companion mod initialised.");
+        LOGGER.info("Companion mod initialised — config: sidecar={}:{}, interval={}s, scanRadius={}",
+                CompanionConfig.get().sidecarHost,
+                CompanionConfig.get().sidecarPort,
+                CompanionConfig.get().decisionIntervalSeconds,
+                CompanionConfig.get().scanRadius);
     }
 
     // ------------------------------------------------------------------
@@ -52,35 +51,37 @@ public class CompanionMod implements ModInitializer {
 
     private void registerChatListener() {
         ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> {
-            String text = message.getContent().getString().trim();
+            String text    = message.getContent().getString().trim();
+            String prefix  = CompanionConfig.get().chatPrefix;
+            double radius  = CompanionConfig.get().chatTriggerRadius;
 
-            // Must start with "companion" (case-insensitive), optionally followed by
-            // ":", ",", or whitespace — e.g. "companion go explore" or "companion: find food"
-            String lower = text.toLowerCase();
-            if (!lower.startsWith(CHAT_PREFIX)) return;
+            if (!text.toLowerCase().startsWith(prefix.toLowerCase())) return;
 
-            // Strip the prefix + optional punctuation to get the instruction
-            String rest = text.substring(CHAT_PREFIX.length()).replaceFirst("^[:\\s,]+", "").trim();
-            if (rest.isEmpty()) return;
+            // Strip prefix + optional punctuation/whitespace
+            String instruction = text.substring(prefix.length())
+                    .replaceFirst("^[:\\s,]+", "").trim();
+            if (instruction.isEmpty()) return;
 
-            routeMessageToNearbyCompanions(sender, rest);
+            routeMessageToNearbyCompanions(sender, instruction, radius);
         });
     }
 
-    private void routeMessageToNearbyCompanions(ServerPlayerEntity sender, String message) {
+    private void routeMessageToNearbyCompanions(ServerPlayerEntity sender,
+                                                 String message, double radius) {
         if (!(sender.getWorld() instanceof ServerWorld sw)) return;
 
-        Box searchBox = sender.getBoundingBox().expand(CHAT_TRIGGER_RADIUS);
-        List<CompanionEntity> nearby = sw.getEntitiesByClass(CompanionEntity.class, searchBox, e -> true);
+        Box searchBox = sender.getBoundingBox().expand(radius);
+        List<CompanionEntity> nearby = sw.getEntitiesByClass(
+                CompanionEntity.class, searchBox, e -> true);
 
         if (nearby.isEmpty()) {
-            LOGGER.debug("Chat addressed to companion but none within {} blocks of {}", CHAT_TRIGGER_RADIUS, sender.getName().getString());
+            LOGGER.debug("Companion chat prefix heard but no companions within {} blocks", radius);
             return;
         }
 
-        LOGGER.info("Routing player message to {} companion(s): \"{}\"", nearby.size(), message);
-        for (CompanionEntity companion : nearby) {
-            companion.onPlayerMessage(sender.getName().getString(), message);
+        LOGGER.info("Routing message to {} companion(s): \"{}\"", nearby.size(), message);
+        for (CompanionEntity c : nearby) {
+            c.onPlayerMessage(sender.getName().getString(), message);
         }
     }
 }

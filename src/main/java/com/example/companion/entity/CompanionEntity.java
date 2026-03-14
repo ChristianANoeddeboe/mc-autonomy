@@ -140,6 +140,7 @@ public class CompanionEntity extends PathAwareEntity {
      * The message is prefixed with "[Companion]" to distinguish it from player chat.
      */
     private void narrateGoal(GoalType type) {
+        if (!com.example.companion.CompanionConfig.get().narrationEnabled) return;
         if (!(getWorld() instanceof ServerWorld sw)) return;
         String readable = type.name().replace('_', ' ').toLowerCase();
         Text msg = Text.literal("[Companion] Now: " + readable);

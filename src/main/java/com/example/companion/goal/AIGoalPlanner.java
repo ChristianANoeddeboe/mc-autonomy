@@ -1,11 +1,13 @@
 package com.example.companion.goal;
 
+import com.example.companion.CompanionConfig;
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.entity.WorldPerception;
 import com.example.companion.net.SidecarClient;
 import com.google.gson.JsonObject;
 
+import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -17,15 +19,38 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li>The current goal reports complete or failed</li>
  *   <li>A player addresses the companion by name in chat</li>
  *   <li>A significant event occurs (health spike, night begins)</li>
- *   <li>The periodic fallback timer fires (every {@value FALLBACK_INTERVAL_TICKS} ticks)</li>
+ *   <li>The periodic fallback timer fires (configurable, default 60 s)</li>
  * </ul>
+ *
+ * <h3>Failure recovery</h3>
+ * On the <em>first</em> consecutive failure of a goal type the planner applies
+ * a hardcoded recovery goal immediately (no sidecar round-trip). On repeated
+ * failures it escalates to an AI request with failure context.
  *
  * <p>Requests are non-blocking; the response is applied on the next safe tick.
  */
 public class AIGoalPlanner {
 
-    /** 60 seconds × 20 ticks/s */
-    private static final int FALLBACK_INTERVAL_TICKS = 20 * 60;
+    // ------------------------------------------------------------------
+    // Recovery strategy table
+    // ------------------------------------------------------------------
+
+    /** Immediate fallback goal tried on first failure before asking the AI. */
+    private static final Map<GoalType, GoalType> RECOVERY_MAP = new EnumMap<>(GoalType.class);
+    static {
+        RECOVERY_MAP.put(GoalType.GATHER_WOOD,    GoalType.EXPLORE);        // find trees elsewhere
+        RECOVERY_MAP.put(GoalType.FIND_FOOD,      GoalType.EXPLORE);        // explore for food
+        RECOVERY_MAP.put(GoalType.BUILD_SHELTER,  GoalType.GATHER_WOOD);    // get materials first
+        RECOVERY_MAP.put(GoalType.MINE_RESOURCES, GoalType.EXPLORE);        // better mining spot
+        RECOVERY_MAP.put(GoalType.CRAFT_ITEM,     GoalType.GATHER_WOOD);    // gather raw materials
+        RECOVERY_MAP.put(GoalType.SLEEP,          GoalType.IDLE);           // no bed — rest
+        RECOVERY_MAP.put(GoalType.EXPLORE,        GoalType.IDLE);           // couldn't explore
+        RECOVERY_MAP.put(GoalType.FOLLOW_PLAYER,  GoalType.IDLE);           // player unreachable
+    }
+
+    // ------------------------------------------------------------------
+    // Fields
+    // ------------------------------------------------------------------
 
     private final CompanionEntity entity;
     private final SidecarClient sidecarClient;
@@ -36,7 +61,10 @@ public class AIGoalPlanner {
     /** Countdown for a scheduled one-shot trigger; -1 = none pending. */
     private int scheduledTriggerIn = -1;
 
-    // Queued result from async sidecar callback
+    /** Number of consecutive failures per goal type (reset on success or AI replan). */
+    private final Map<GoalType, Integer> consecutiveFailures = new EnumMap<>(GoalType.class);
+
+    // Queued result from async sidecar callback — applied on next tick
     private volatile GoalType pendingGoalType = null;
     private volatile Map<String, Object> pendingParams = null;
 
@@ -44,6 +72,10 @@ public class AIGoalPlanner {
         this.entity = entity;
         this.sidecarClient = new SidecarClient();
     }
+
+    // ------------------------------------------------------------------
+    // Scheduled trigger
+    // ------------------------------------------------------------------
 
     /**
      * Schedule a sidecar request to fire in {@code delayTicks} ticks.
@@ -60,11 +92,27 @@ public class AIGoalPlanner {
     // ------------------------------------------------------------------
 
     public void onGoalComplete() {
+        consecutiveFailures.remove(entity.getActiveGoalType());
         triggerRequest("goal-complete");
     }
 
     public void onGoalFailed(String reason) {
-        triggerRequest("goal-failed: " + reason);
+        GoalType failed = entity.getActiveGoalType();
+        int failures = consecutiveFailures.merge(failed, 1, Integer::sum);
+
+        GoalType recovery = RECOVERY_MAP.get(failed);
+        if (failures == 1 && recovery != null) {
+            // First failure — apply recovery immediately, no round-trip
+            CompanionMod.LOGGER.info(
+                    "AIGoalPlanner: {} failed (first time), applying recovery goal {} before asking AI",
+                    failed, recovery);
+            // The recovery goal's own complete/fail callback will trigger the next AI request
+            entity.setGoal(recovery, Map.of());
+        } else {
+            // Repeated failure or no recovery — escalate to AI with context
+            consecutiveFailures.put(failed, 0); // reset counter after AI involvement
+            triggerRequest("goal-failed(" + failures + "x): " + reason);
+        }
     }
 
     public void onPlayerMessage(String message) {
@@ -81,7 +129,7 @@ public class AIGoalPlanner {
 
     /** Must be called every game tick from {@link CompanionEntity#tick()}. */
     public void tick() {
-        // Apply queued result from async sidecar response
+        // Apply queued sidecar response
         if (pendingGoalType != null) {
             GoalType type = pendingGoalType;
             Map<String, Object> params = pendingParams;
@@ -90,7 +138,7 @@ public class AIGoalPlanner {
             entity.setGoal(type, params != null ? params : Map.of());
         }
 
-        // Scheduled one-shot trigger (e.g. initial spawn request)
+        // Scheduled one-shot trigger
         if (scheduledTriggerIn > 0) {
             scheduledTriggerIn--;
             if (scheduledTriggerIn == 0) {
@@ -100,8 +148,10 @@ public class AIGoalPlanner {
             }
         }
 
+        // Periodic fallback
+        int fallbackTicks = CompanionConfig.get().decisionIntervalSeconds * 20;
         ticksSinceLastRequest++;
-        if (ticksSinceLastRequest >= FALLBACK_INTERVAL_TICKS) {
+        if (ticksSinceLastRequest >= fallbackTicks) {
             triggerRequest("periodic-fallback");
         }
     }
@@ -112,7 +162,7 @@ public class AIGoalPlanner {
 
     private void triggerRequest(String reason) {
         if (!requestPending.compareAndSet(false, true)) {
-            CompanionMod.LOGGER.debug("AIGoalPlanner: request already in flight, skipping ({})", reason);
+            CompanionMod.LOGGER.debug("AIGoalPlanner: request in flight, skipping ({})", reason);
             return;
         }
 
@@ -124,7 +174,7 @@ public class AIGoalPlanner {
         sidecarClient.postDecideAsync(worldState, response -> {
             requestPending.set(false);
             if (response == null) {
-                CompanionMod.LOGGER.warn("AIGoalPlanner: null response from sidecar, keeping current goal");
+                CompanionMod.LOGGER.warn("AIGoalPlanner: null sidecar response, keeping current goal");
                 return;
             }
             try {
@@ -132,7 +182,6 @@ public class AIGoalPlanner {
                 GoalType type = GoalType.fromString(goalStr);
                 CompanionMod.LOGGER.info("AIGoalPlanner: received goal={} reason={}",
                         type, response.has("reason") ? response.get("reason").getAsString() : "?");
-                // Queue for safe application on next tick
                 pendingGoalType = type;
                 pendingParams = Map.of();
             } catch (Exception e) {

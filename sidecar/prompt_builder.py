@@ -1,30 +1,77 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 
+from config import CONFIG
 from models import WorldState
 
-SYSTEM_PROMPT = """\
-You are a Minecraft companion entity. Your job is to decide what high-level
-goal to pursue next based on the current world state.
+logger = logging.getLogger(__name__)
 
-Rules:
-- Prioritize survival (health, hunger, shelter at night)
-- Respect the player's last instruction if recent
-- Return ONLY valid JSON matching the GoalDecision schema — no extra text
-- Choose one goal from: GATHER_WOOD, FIND_FOOD, BUILD_SHELTER,
-  MINE_RESOURCES, EXPLORE, FOLLOW_PLAYER, CRAFT_ITEM, SLEEP, IDLE
+_PERSONALITY_FILE = Path(__file__).parent / CONFIG.get("personality_file", "personality.json")
 
-GoalDecision schema:
+_GOAL_LIST = (
+    "GATHER_WOOD, FIND_FOOD, BUILD_SHELTER, MINE_RESOURCES, "
+    "EXPLORE, FOLLOW_PLAYER, CRAFT_ITEM, SLEEP, IDLE"
+)
+
+_GOAL_DECISION_SCHEMA = """\
 {
-  "goal": "<GOAL_TYPE>",
+  "goal": "<one of the goals listed above>",
   "params": {},
   "reason": "<one sentence explaining why>",
-  "memory_note": "<optional note to remember, or null>"
-}
+  "memory_note": "<optional string to remember long-term, or null>"
+}"""
+
+
+def _load_personality() -> dict:
+    if _PERSONALITY_FILE.exists():
+        try:
+            return json.loads(_PERSONALITY_FILE.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Could not load personality file: %s", exc)
+    return {
+        "name": "Companion",
+        "description": "A Minecraft companion entity.",
+        "style": "practical",
+        "priorities": [
+            "Survival first — health and hunger before anything else",
+            "Follow player instructions when recently given",
+        ],
+    }
+
+
+def _build_system_prompt(personality: dict) -> str:
+    name        = personality.get("name", "Companion")
+    description = personality.get("description", "")
+    style       = personality.get("style", "practical")
+    priorities  = "\n".join(f"- {p}" for p in personality.get("priorities", []))
+
+    return f"""\
+You are {name}, a Minecraft companion entity. {description}
+Your communication style is {style}.
+
+Core priorities:
+{priorities}
+
+Your job is to choose the single best high-level goal to pursue next, given the
+current world state and your memory context.
+
+Available goals: {_GOAL_LIST}
+
+Rules:
+- Return ONLY valid JSON matching the GoalDecision schema — no extra text or prose
+- Choose exactly one goal from the list above
+- If the player recently gave an instruction, respect it unless survival demands otherwise
+- Prefer goals that address the most urgent need (low health > low hunger > night > resources)
+
+GoalDecision schema:
+{_GOAL_DECISION_SCHEMA}
 """
 
-USER_TEMPLATE = """\
+
+_USER_TEMPLATE = """\
 World state:
 {world_state_json}
 
@@ -37,9 +84,10 @@ Decide the next goal.
 
 def build_prompt(world_state: WorldState, memory_context: str) -> tuple[str, str]:
     """Return (system_prompt, user_message) ready to send to an LLM."""
-    world_json = json.dumps(world_state.model_dump(), indent=2)
-    user_msg = USER_TEMPLATE.format(
-        world_state_json=world_json,
+    personality = _load_personality()
+    system = _build_system_prompt(personality)
+    user = _USER_TEMPLATE.format(
+        world_state_json=json.dumps(world_state.model_dump(), indent=2),
         memory_context=memory_context,
     )
-    return SYSTEM_PROMPT, user_msg
+    return system, user

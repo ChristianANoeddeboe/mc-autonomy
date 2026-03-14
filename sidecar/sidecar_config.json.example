@@ -1,0 +1,10 @@
+{
+  "stub_mode": false,
+  "ollama_base_url": "http://localhost:11434",
+  "ollama_model": "qwen2.5-coder:7b",
+  "ollama_timeout": 4.0,
+  "anthropic_model": "claude-haiku-4-5-20251001",
+  "personality_file": "personality.json",
+  "port": 8765,
+  "log_level": "INFO"
+}
