@@ -48,6 +48,7 @@ public class CompanionEntity extends PathAwareEntity {
 
     private String lastPlayerMessage = null;
     private String goalFailedReason = null;
+    private boolean initialRequestScheduled = false;
 
     public CompanionEntity(EntityType<? extends CompanionEntity> entityType, World world) {
         super(entityType, world);
@@ -65,6 +66,13 @@ public class CompanionEntity extends PathAwareEntity {
     public void tick() {
         super.tick();
         if (getWorld().isClient) return;
+
+        // Fire the first sidecar request 1 second after spawn so the entity
+        // picks a real goal immediately rather than waiting the 60 s fallback.
+        if (!initialRequestScheduled) {
+            goalPlanner.scheduleRequest(20);
+            initialRequestScheduled = true;
+        }
 
         tickHunger();
 

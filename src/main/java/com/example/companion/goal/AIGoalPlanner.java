@@ -33,6 +33,9 @@ public class AIGoalPlanner {
     private int ticksSinceLastRequest = 0;
     private final AtomicBoolean requestPending = new AtomicBoolean(false);
 
+    /** Countdown for a scheduled one-shot trigger; -1 = none pending. */
+    private int scheduledTriggerIn = -1;
+
     // Queued result from async sidecar callback
     private volatile GoalType pendingGoalType = null;
     private volatile Map<String, Object> pendingParams = null;
@@ -40,6 +43,16 @@ public class AIGoalPlanner {
     public AIGoalPlanner(CompanionEntity entity) {
         this.entity = entity;
         this.sidecarClient = new SidecarClient();
+    }
+
+    /**
+     * Schedule a sidecar request to fire in {@code delayTicks} ticks.
+     * If a request is already scheduled the closer deadline wins.
+     */
+    public void scheduleRequest(int delayTicks) {
+        if (scheduledTriggerIn < 0 || delayTicks < scheduledTriggerIn) {
+            scheduledTriggerIn = Math.max(1, delayTicks);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -75,6 +88,16 @@ public class AIGoalPlanner {
             pendingGoalType = null;
             pendingParams = null;
             entity.setGoal(type, params != null ? params : Map.of());
+        }
+
+        // Scheduled one-shot trigger (e.g. initial spawn request)
+        if (scheduledTriggerIn > 0) {
+            scheduledTriggerIn--;
+            if (scheduledTriggerIn == 0) {
+                scheduledTriggerIn = -1;
+                triggerRequest("scheduled");
+                return;
+            }
         }
 
         ticksSinceLastRequest++;

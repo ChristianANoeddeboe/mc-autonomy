@@ -1,10 +1,25 @@
 """Python AI sidecar — FastAPI server for the Minecraft companion mod.
 
-Phase 1: stub that returns a hardcoded IDLE goal so the HTTP round-trip
-can be verified before real AI is wired in.
+Endpoints
+---------
+POST /decide      — receive WorldState, return GoalDecision (AI or stub)
+GET  /health      — liveness check; reports stub_mode status
+GET  /memory      — inspect persistent notes and recent decisions
+DELETE /memory    — clear all persistent notes
+
+Environment variables
+---------------------
+STUB_MODE=true        Skip the LLM and always return IDLE (default: true).
+                      Set to "false" for real AI decisions.
+OLLAMA_BASE_URL       Ollama server URL (default: http://localhost:11434)
+OLLAMA_MODEL          Model name (default: qwen2.5-coder:7b)
+OLLAMA_TIMEOUT        Seconds before Ollama times out and Anthropic fallback fires (default: 4)
+ANTHROPIC_MODEL       Fallback model (default: claude-haiku-4-5-20251001)
+ANTHROPIC_API_KEY     Required when STUB_MODE=false and Ollama is unavailable.
 
 Run with:
     uvicorn main:app --port 8765 --reload
+    STUB_MODE=false uvicorn main:app --port 8765 --reload   # real AI
 """
 
 from __future__ import annotations
@@ -37,6 +52,34 @@ async def health() -> dict:
     return {"status": "ok", "stub_mode": STUB_MODE}
 
 
+@app.get("/memory")
+async def get_memory() -> dict:
+    """Inspect the companion's current memory state."""
+    return {
+        "persistent_notes": memory.persistent_notes,
+        "player_preferences": memory.player_preferences,
+        "recent_decisions": [
+            {
+                "tick": r.tick,
+                "entity_id": r.entity_id,
+                "goal": r.goal,
+                "reason": r.reason,
+            }
+            for r in memory.recent_decisions
+        ],
+    }
+
+
+@app.delete("/memory")
+async def clear_memory() -> dict:
+    """Clear all persistent notes (recent decisions remain in RAM)."""
+    memory.persistent_notes.clear()
+    memory.player_preferences.clear()
+    memory._save()
+    logger.info("Memory cleared via API")
+    return {"cleared": True}
+
+
 @app.post("/decide", response_model=GoalDecision)
 async def decide(world_state: WorldState) -> GoalDecision:
     """Receive world state from the Fabric mod and return a GoalDecision.
@@ -54,7 +97,7 @@ async def decide(world_state: WorldState) -> GoalDecision:
     if STUB_MODE:
         decision = GoalDecision(
             goal=GoalType.IDLE,
-            reason="[STUB] Phase 1 — AI not yet wired in.",
+            reason="[STUB] STUB_MODE=true — set STUB_MODE=false to enable real AI decisions.",
         )
         logger.info("STUB response: %s", decision)
         return decision
