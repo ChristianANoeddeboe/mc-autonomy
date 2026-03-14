@@ -5,10 +5,16 @@ import com.example.companion.behavior.ReactiveBehaviorController;
 import com.example.companion.goal.AIGoalPlanner;
 import com.example.companion.goal.GoalExecutor;
 import com.example.companion.goal.GoalType;
+import com.example.companion.util.ScanUtils;
 import net.minecraft.entity.EntityType;
+import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.mob.PathAwareEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.inventory.SimpleInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.text.Text;
+import net.minecraft.util.math.Box;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
@@ -34,6 +40,9 @@ public class CompanionEntity extends PathAwareEntity {
 
     /** Hunger drains 1 point every this many ticks (80 ticks = 4 s). */
     private static final int HUNGER_DRAIN_INTERVAL = 80;
+
+    /** Radius for narrating goal changes to nearby players. */
+    private static final double NARRATION_RADIUS = 32.0;
 
     private final ReactiveBehaviorController reactiveBehaviors;
     private final GoalExecutor goalExecutor;
@@ -89,12 +98,31 @@ public class CompanionEntity extends PathAwareEntity {
     }
 
     // ------------------------------------------------------------------
+    // Item pickup — auto-collect dropped items when walking over them
+    // ------------------------------------------------------------------
+
+    @Override
+    public boolean canPickUpLoot() {
+        return true;
+    }
+
+    @Override
+    protected void loot(ItemEntity itemEntity) {
+        ItemStack stack = itemEntity.getStack().copy();
+        if (ScanUtils.addToInventory(this, stack)) {
+            itemEntity.discard();
+            CompanionMod.LOGGER.debug("CompanionEntity picked up {}", ScanUtils.itemName(stack));
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Goal management
     // ------------------------------------------------------------------
 
     public void setGoal(GoalType type, Map<String, Object> params) {
         goalFailedReason = null;
         goalExecutor.setGoal(type, params);
+        narrateGoal(type);
         CompanionMod.LOGGER.info("CompanionEntity: goal set to {}", type);
     }
 
@@ -105,6 +133,21 @@ public class CompanionEntity extends PathAwareEntity {
     public void reportGoalFailed(String reason) {
         goalFailedReason = reason;
         goalPlanner.onGoalFailed(reason);
+    }
+
+    /**
+     * Broadcast the new goal as a chat message to nearby players.
+     * The message is prefixed with "[Companion]" to distinguish it from player chat.
+     */
+    private void narrateGoal(GoalType type) {
+        if (!(getWorld() instanceof ServerWorld sw)) return;
+        String readable = type.name().replace('_', ' ').toLowerCase();
+        Text msg = Text.literal("[Companion] Now: " + readable);
+        Box box = getBoundingBox().expand(NARRATION_RADIUS);
+        List<PlayerEntity> nearby = sw.getEntitiesByClass(PlayerEntity.class, box, p -> true);
+        for (PlayerEntity player : nearby) {
+            player.sendMessage(msg, false);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -121,14 +164,14 @@ public class CompanionEntity extends PathAwareEntity {
     // Accessors
     // ------------------------------------------------------------------
 
-    public GoalType getActiveGoalType()  { return goalExecutor.getActiveType(); }
-    public String   getLastPlayerMessage(){ return lastPlayerMessage; }
-    public String   getGoalFailedReason() { return goalFailedReason; }
-    public ActionExecutor getActions()    { return actions; }
+    public GoalType getActiveGoalType()   { return goalExecutor.getActiveType(); }
+    public String   getLastPlayerMessage() { return lastPlayerMessage; }
+    public String   getGoalFailedReason()  { return goalFailedReason; }
+    public ActionExecutor getActions()     { return actions; }
     public GoalExecutor   getGoalExecutor(){ return goalExecutor; }
 
-    public int  getHunger()         { return hunger; }
-    public void setHunger(int value){ hunger = Math.max(0, Math.min(20, value)); }
+    public int  getHunger()          { return hunger; }
+    public void setHunger(int value) { hunger = Math.max(0, Math.min(20, value)); }
 
     public SimpleInventory getCarriedInventory() { return inventory; }
 
