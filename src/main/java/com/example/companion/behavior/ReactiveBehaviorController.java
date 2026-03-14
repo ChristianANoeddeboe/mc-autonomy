@@ -5,27 +5,28 @@ import com.example.companion.entity.CompanionEntity;
 /**
  * Runs every tick <em>before</em> the {@link com.example.companion.goal.GoalExecutor}.
  *
- * <p>Evaluates each reactive behavior in priority order. If any behavior activates
- * it can pause the active goal to avoid conflicting navigation.
+ * <p>Evaluates each reactive behavior in priority order. If any behavior is
+ * active the current goal is paused so navigation doesn't conflict; it is
+ * resumed as soon as all behaviors deactivate.
  *
  * <p>Priority (highest first):
  * <ol>
- *   <li>{@link FleeBehavior} — health critical</li>
- *   <li>{@link DodgeBehavior} — lit creeper nearby</li>
+ *   <li>{@link FleeBehavior}   — health critical (overrides everything)</li>
+ *   <li>{@link DodgeBehavior}  — lit creeper nearby</li>
  *   <li>{@link AttackBehavior} — hostile mob in melee range</li>
- *   <li>{@link EatBehavior} — hunger low, food available</li>
+ *   <li>{@link EatBehavior}    — hungry + food available (does not pause goal)</li>
  * </ol>
  */
 public class ReactiveBehaviorController {
 
     private final CompanionEntity entity;
 
-    private final FleeBehavior flee;
-    private final DodgeBehavior dodge;
+    private final FleeBehavior   flee;
+    private final DodgeBehavior  dodge;
     private final AttackBehavior attack;
-    private final EatBehavior eat;
+    private final EatBehavior    eat;
 
-    private boolean goalWasPaused = false;
+    private boolean goalPaused = false;
 
     public ReactiveBehaviorController(CompanionEntity entity) {
         this.entity = entity;
@@ -36,14 +37,20 @@ public class ReactiveBehaviorController {
     }
 
     public void tick() {
-        boolean anyActive = flee.tick() || dodge.tick() || attack.tick() || eat.tick();
+        // Flee, dodge, and attack are goal-pausing: companion cannot pursue a
+        // long-term goal while sprinting for its life or fighting.
+        boolean pausingActive = flee.tick() || dodge.tick() || attack.tick();
 
-        if (anyActive && !goalWasPaused) {
-            // TODO: entity.getGoalExecutor().pause();
-            goalWasPaused = true;
-        } else if (!anyActive && goalWasPaused) {
-            // TODO: entity.getGoalExecutor().resume();
-            goalWasPaused = false;
+        if (pausingActive && !goalPaused) {
+            entity.getGoalExecutor().pause();
+            goalPaused = true;
+        } else if (!pausingActive && goalPaused) {
+            entity.getGoalExecutor().resume();
+            goalPaused = false;
         }
+
+        // Eating does not pause the goal — the companion can eat while idle or
+        // between pathfinding steps.
+        eat.tick();
     }
 }

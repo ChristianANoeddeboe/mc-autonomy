@@ -4,6 +4,7 @@ import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.MobEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.Box;
 
 import java.util.List;
@@ -11,43 +12,64 @@ import java.util.List;
 /**
  * Reactive behavior: attack the nearest hostile mob within melee range.
  *
- * <p>Trigger: hostile mob within {@value TRIGGER_DISTANCE} blocks.
- * <p>Action: face target and swing weapon.
- *
- * <p>TODO (Phase 2): wire up actual attack/swing call.
+ * <p>Trigger: a {@link MobEntity} targeting the companion or any player within
+ * {@value TRIGGER_DISTANCE} blocks.
+ * <p>Action: face target, navigate into melee range, and call {@code tryAttack}.
  */
 public class AttackBehavior {
 
-    private static final double TRIGGER_DISTANCE = 4.0;
+    private static final double TRIGGER_DISTANCE = 6.0;
+    private static final double MELEE_DISTANCE   = 2.5;
+    private static final double CHASE_SPEED      = 1.3;
 
     private final CompanionEntity entity;
-    private boolean active = false;
 
     public AttackBehavior(CompanionEntity entity) {
         this.entity = entity;
     }
 
-    /** @return true if this behavior is currently active */
+    /**
+     * @return true if this behavior is currently active (hostile target in range)
+     */
     public boolean tick() {
-        LivingEntity target = findNearestHostile();
-        if (target == null) {
-            active = false;
-            return false;
+        if (!(entity.getWorld() instanceof ServerWorld sw)) return false;
+
+        LivingEntity target = findNearestHostile(sw);
+        if (target == null) return false;
+
+        entity.setTarget(target);
+        entity.lookAt(target, 30f, 30f);
+
+        double dist = entity.distanceTo(target);
+        if (dist <= MELEE_DISTANCE) {
+            entity.getNavigation().stop();
+            entity.tryAttack(sw, target);
+            CompanionMod.LOGGER.debug("AttackBehavior: attacked {}", target.getType().getUntranslatedName());
+        } else {
+            entity.getNavigation().startMovingTo(target, CHASE_SPEED);
         }
 
-        active = true;
-        entity.lookAt(target, 30f, 30f);
-        // TODO: entity.tryAttack(target) — requires ServerWorld check
-        CompanionMod.LOGGER.debug("AttackBehavior: targeting {}", target.getType().getUntranslatedName());
         return true;
     }
 
-    private LivingEntity findNearestHostile() {
+    private LivingEntity findNearestHostile(ServerWorld sw) {
         Box box = entity.getBoundingBox().expand(TRIGGER_DISTANCE);
-        List<MobEntity> mobs = entity.getWorld().getEntitiesByClass(MobEntity.class, box,
-                mob -> mob != entity && mob.getTarget() != null);
-        if (mobs.isEmpty()) return null;
-        return mobs.stream()
+
+        // Prioritise mobs that are actively targeting the companion
+        List<MobEntity> targeting = sw.getEntitiesByClass(MobEntity.class, box,
+                mob -> mob != entity && mob.isAlive() && entity.equals(mob.getTarget()));
+        if (!targeting.isEmpty()) {
+            return nearest(targeting);
+        }
+
+        // Fall back to any mob targeting a nearby player
+        List<MobEntity> hostile = sw.getEntitiesByClass(MobEntity.class, box,
+                mob -> mob != entity && mob.isAlive() && mob.getTarget() instanceof net.minecraft.entity.player.PlayerEntity);
+        return nearest(hostile);
+    }
+
+    private LivingEntity nearest(List<? extends LivingEntity> list) {
+        return list.stream()
                 .min((a, b) -> Double.compare(entity.distanceTo(a), entity.distanceTo(b)))
                 .orElse(null);
     }
