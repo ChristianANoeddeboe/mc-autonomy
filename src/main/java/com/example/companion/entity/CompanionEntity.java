@@ -5,6 +5,7 @@ import com.example.companion.behavior.ReactiveBehaviorController;
 import com.example.companion.goal.AIGoalPlanner;
 import com.example.companion.goal.GoalExecutor;
 import com.example.companion.goal.GoalType;
+import com.example.companion.objective.Objective;
 import com.example.companion.util.ScanUtils;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.ItemEntity;
@@ -58,6 +59,9 @@ public class CompanionEntity extends PathAwareEntity {
     private String lastPlayerMessage = null;
     private String goalFailedReason = null;
     private boolean initialRequestScheduled = false;
+
+    /** The companion's long-term objective, used to bias AI goal selection. */
+    private Objective objective = Objective.NONE;
 
     public CompanionEntity(EntityType<? extends CompanionEntity> entityType, World world) {
         super(entityType, world);
@@ -164,6 +168,14 @@ public class CompanionEntity extends PathAwareEntity {
     // ------------------------------------------------------------------
     // Accessors
     // ------------------------------------------------------------------
+
+    public Objective getObjective()          { return objective; }
+    public void      setObjective(Objective o) {
+        this.objective = o;
+        CompanionMod.LOGGER.info("CompanionEntity: objective set to {}", o.name());
+        // Trigger an immediate replan so the AI knows about the new objective
+        goalPlanner.scheduleRequest(5);
+    }
 
     public GoalType getActiveGoalType()   { return goalExecutor.getActiveType(); }
     public String   getLastPlayerMessage() { return lastPlayerMessage; }

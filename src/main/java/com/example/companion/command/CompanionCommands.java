@@ -3,6 +3,8 @@ package com.example.companion.command;
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.GoalType;
+import com.example.companion.objective.Objective;
+import com.example.companion.objective.ObjectiveTracker;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -19,10 +21,13 @@ import java.util.Map;
  * Registers the {@code /companion} command tree for in-game control and testing.
  *
  * <pre>
- *   /companion spawn          — spawn a companion at the player's feet
- *   /companion status         — show current goal, health, hunger
- *   /companion goal <type>    — manually set the active goal (for testing)
- *   /companion remove         — remove all companion entities in the world
+ *   /companion spawn               — spawn a companion at the player's feet
+ *   /companion status              — show current goal, health, hunger, objective
+ *   /companion goal <type>         — manually set the active goal (for testing)
+ *   /companion objective set <obj> — set the long-term objective
+ *   /companion objective status    — show objective progress
+ *   /companion objective list      — list all available objectives
+ *   /companion remove              — remove all companion entities in the world
  * </pre>
  */
 public final class CompanionCommands {
@@ -52,6 +57,20 @@ public final class CompanionCommands {
 
                                 .then(CommandManager.literal("remove")
                                         .executes(CompanionCommands::removeAll))
+
+                                .then(CommandManager.literal("objective")
+                                        .then(CommandManager.literal("set")
+                                                .then(CommandManager.argument("objective", StringArgumentType.word())
+                                                        .suggests((ctx, builder) -> {
+                                                            for (Objective o : Objective.values())
+                                                                builder.suggest(o.name().toLowerCase());
+                                                            return builder.buildFuture();
+                                                        })
+                                                        .executes(CompanionCommands::setObjective)))
+                                        .then(CommandManager.literal("status")
+                                                .executes(CompanionCommands::objectiveStatus))
+                                        .then(CommandManager.literal("list")
+                                                .executes(CompanionCommands::objectiveList)))
                 ));
     }
 
@@ -142,5 +161,71 @@ public final class CompanionCommands {
         companions.forEach(CompanionEntity::discard);
         src.sendFeedback(() -> Text.literal("Removed " + companions.size() + " companion(s)."), false);
         return companions.size();
+    }
+
+    // ------------------------------------------------------------------
+    // Objective handlers
+    // ------------------------------------------------------------------
+
+    private static int setObjective(CommandContext<ServerCommandSource> ctx) {
+        ServerCommandSource src = ctx.getSource();
+        String objStr = StringArgumentType.getString(ctx, "objective");
+        Objective obj = Objective.fromString(objStr);
+
+        ServerWorld world = src.getWorld();
+        List<CompanionEntity> companions = world.getEntitiesByClass(
+                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+
+        if (companions.isEmpty()) {
+            src.sendError(Text.literal("No companions found within 128 blocks."));
+            return 0;
+        }
+        for (CompanionEntity c : companions) {
+            c.setObjective(obj);
+        }
+        final Objective finalObj = obj;
+        src.sendFeedback(() -> Text.literal(
+                "Objective set to [" + finalObj.name() + "] — " + finalObj.displayName
+                + " on " + companions.size() + " companion(s)."), false);
+        return companions.size();
+    }
+
+    private static int objectiveStatus(CommandContext<ServerCommandSource> ctx) {
+        ServerCommandSource src = ctx.getSource();
+        ServerWorld world = src.getWorld();
+
+        List<CompanionEntity> companions = world.getEntitiesByClass(
+                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+
+        if (companions.isEmpty()) {
+            src.sendFeedback(() -> Text.literal("No companions found within 128 blocks."), false);
+            return 0;
+        }
+
+        for (CompanionEntity c : companions) {
+            String id = c.getUuidAsString().substring(0, 8);
+            com.google.gson.JsonObject obj = ObjectiveTracker.serialize(c);
+            String type      = obj.get("type").getAsString();
+            String milestone = obj.get("milestone").getAsString();
+            boolean complete = obj.get("complete").getAsBoolean();
+
+            src.sendFeedback(() -> Text.literal(
+                    "[" + id + "] Objective: " + type + (complete ? " ✓" : "")), false);
+            src.sendFeedback(() -> Text.literal("  Milestone: " + milestone), false);
+
+            obj.getAsJsonArray("progress").forEach(e ->
+                    src.sendFeedback(() -> Text.literal("    " + e.getAsString()), false));
+        }
+        return companions.size();
+    }
+
+    private static int objectiveList(CommandContext<ServerCommandSource> ctx) {
+        ServerCommandSource src = ctx.getSource();
+        src.sendFeedback(() -> Text.literal("Available objectives:"), false);
+        for (Objective o : Objective.values()) {
+            src.sendFeedback(() -> Text.literal(
+                    "  " + o.name().toLowerCase() + " — " + o.displayName), false);
+        }
+        return Objective.values().length;
     }
 }

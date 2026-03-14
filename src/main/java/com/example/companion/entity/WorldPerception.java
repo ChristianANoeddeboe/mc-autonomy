@@ -1,5 +1,6 @@
 package com.example.companion.entity;
 
+import com.example.companion.objective.ObjectiveTracker;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
@@ -66,6 +67,7 @@ public final class WorldPerception {
         else                 info.add("last_player_message", JsonNull.INSTANCE);
 
         info.addProperty("current_goal", entity.getActiveGoalType().name());
+        info.add("objective", ObjectiveTracker.serialize(entity));
 
         String failReason = entity.getGoalFailedReason();
         if (failReason != null) info.addProperty("goal_failed_reason", failReason);

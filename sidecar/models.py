@@ -47,6 +47,15 @@ class CompanionState(BaseModel):
     inventory: list[str]
 
 
+class ObjectiveInfo(BaseModel):
+    type: str = "NONE"
+    display_name: str = "No objective"
+    guidance: str = ""
+    milestone: str = ""
+    progress: list[str] = []
+    complete: bool = False
+
+
 class WorldInfo(BaseModel):
     time_of_day: str          # dawn | day | dusk | night
     weather: str              # clear | rain | thunder
@@ -58,6 +67,7 @@ class WorldInfo(BaseModel):
     last_player_message: str | None = None
     current_goal: str = "IDLE"
     goal_failed_reason: str | None = None
+    objective: ObjectiveInfo = ObjectiveInfo()
 
 
 class WorldState(BaseModel):
