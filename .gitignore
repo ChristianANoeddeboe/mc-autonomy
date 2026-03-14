@@ -38,3 +38,11 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# python sidecar
+
+sidecar/__pycache__/
+sidecar/*.pyc
+sidecar/.venv/
+sidecar/venv/
+sidecar/memory.json
