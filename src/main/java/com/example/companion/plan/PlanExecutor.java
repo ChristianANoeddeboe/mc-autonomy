@@ -103,7 +103,7 @@ public class PlanExecutor {
         notifyStepComplete(currentPlan, step);
 
         if (currentPlan.advance()) {
-            startCurrentStep();
+            startCurrentStep(true);
         } else {
             CompanionMod.LOGGER.info("PlanExecutor: plan '{}' finished — requesting next",
                     currentPlan.getName());
@@ -120,8 +120,9 @@ public class PlanExecutor {
                 failedType, failures, reason);
 
         if (failures < MAX_STEP_RETRIES) {
-            CompanionMod.LOGGER.info("PlanExecutor: retrying step {}", failedType);
-            startCurrentStep();
+            CompanionMod.LOGGER.info("PlanExecutor: retrying step {} (attempt {}/{})",
+                    failedType, failures + 1, MAX_STEP_RETRIES);
+            startCurrentStep(false);
         } else {
             CompanionMod.LOGGER.warn("PlanExecutor: {} failed {} times — requesting replan",
                     failedType, failures);
@@ -182,13 +183,22 @@ public class PlanExecutor {
             PlanStep s = plan.getSteps().get(i);
             CompanionMod.LOGGER.info("  {}. {} — {}", i + 1, s.goal(), s.note());
         }
-        startCurrentStep();
+        startCurrentStep(true);
     }
 
-    private void startCurrentStep() {
+    /**
+     * Start the plan's current step.
+     *
+     * @param fresh {@code true} when entering a step for the first time (new plan or
+     *              after {@link CompanionPlan#advance()}), which clears the failure
+     *              counter.  Retries must pass {@code false}: resetting the counter on
+     *              a retry makes {@link #MAX_STEP_RETRIES} unreachable and the step
+     *              retries forever instead of triggering a replan.
+     */
+    private void startCurrentStep(boolean fresh) {
         if (currentPlan == null || currentPlan.isComplete()) return;
         PlanStep step = currentPlan.currentStep();
-        currentPlan.resetFailures();
+        if (fresh) currentPlan.resetFailures();
         entity.setGoal(step.goal(), step.params());
     }
 
@@ -243,7 +253,7 @@ public class PlanExecutor {
                     plan.getName(),
                     plan.getCurrentStepIndex() + 1,
                     plan.getStepCount());
-            startCurrentStep();
+            startCurrentStep(true);
         }
     }
 }
