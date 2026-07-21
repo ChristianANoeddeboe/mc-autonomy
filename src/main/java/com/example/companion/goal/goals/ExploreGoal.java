@@ -3,10 +3,11 @@ package com.example.companion.goal.goals;
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.CompanionGoal;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.Level;
 
 import java.util.Map;
 import java.util.Random;
@@ -32,11 +33,11 @@ public class ExploreGoal implements CompanionGoal {
     private boolean failed = false;
     private boolean complete = false;
 
-    private Vec3d startPos = null;
+    private Vec3 startPos = null;
     private double targetDistance = DEFAULT_TARGET_DISTANCE;
 
     // Stall detection
-    private Vec3d lastPos = null;
+    private Vec3 lastPos = null;
     private int stallTicks = 0;
     private int waypointAttempts = 0;
     private static final int MAX_WAYPOINT_ATTEMPTS = 5;
@@ -49,7 +50,7 @@ public class ExploreGoal implements CompanionGoal {
     public void start(Map<String, Object> params) {
         failed = false;
         complete = false;
-        startPos = entity.getPos();
+        startPos = entity.position();
         lastPos = startPos;
         stallTicks = 0;
         waypointAttempts = 0;
@@ -65,14 +66,14 @@ public class ExploreGoal implements CompanionGoal {
         if (startPos == null) return;
 
         // Completion check
-        if (entity.getPos().distanceTo(startPos) >= targetDistance) {
+        if (entity.position().distanceTo(startPos) >= targetDistance) {
             complete = true;
             entity.getNavigation().stop();
             return;
         }
 
         // Pick new waypoint when current one is reached
-        if (entity.getNavigation().isIdle()) {
+        if (entity.getNavigation().isDone()) {
             if (waypointAttempts >= MAX_WAYPOINT_ATTEMPTS) {
                 failed = true;
                 return;
@@ -81,7 +82,7 @@ public class ExploreGoal implements CompanionGoal {
         }
 
         // Stall detection
-        if (entity.getPos().squaredDistanceTo(lastPos) < 4.0) {
+        if (entity.position().distanceToSqr(lastPos) < 4.0) {
             if (++stallTicks >= STALL_TICKS) {
                 CompanionMod.LOGGER.warn("ExploreGoal: stalled, giving up");
                 failed = true;
@@ -89,12 +90,12 @@ public class ExploreGoal implements CompanionGoal {
             }
         } else {
             stallTicks = 0;
-            lastPos = entity.getPos();
+            lastPos = entity.position();
         }
     }
 
     private void pickNextWaypoint() {
-        World world = entity.getWorld();
+        Level world = entity.level();
         Random rng = new Random();
 
         double angle = rng.nextDouble() * 2 * Math.PI;
@@ -102,9 +103,17 @@ public class ExploreGoal implements CompanionGoal {
 
         int wx = (int)(entity.getX() + Math.cos(angle) * dist);
         int wz = (int)(entity.getZ() + Math.sin(angle) * dist);
-        int wy = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, wx, wz);
+        int wy = world.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, wx, wz);
 
-        boolean started = entity.getNavigation().startMovingTo(wx, wy, wz, WALK_SPEED);
+        // Skip waypoints whose surface is water — the companion can't swim safely
+        BlockPos surface = new BlockPos(wx, wy - 1, wz);
+        if (world.getFluidState(surface).is(FluidTags.WATER)) {
+            waypointAttempts++;
+            CompanionMod.LOGGER.debug("ExploreGoal: skipping water waypoint ({},{},{})", wx, wy, wz);
+            return;
+        }
+
+        boolean started = entity.getNavigation().moveTo(wx, wy, wz, WALK_SPEED);
         waypointAttempts++;
         CompanionMod.LOGGER.debug("ExploreGoal: waypoint ({},{},{}) nav={}", wx, wy, wz, started);
     }

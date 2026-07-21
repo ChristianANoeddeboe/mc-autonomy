@@ -2,17 +2,21 @@ package com.example.companion.command;
 
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
+import com.example.companion.entity.WorldPerception;
 import com.example.companion.goal.GoalType;
 import com.example.companion.objective.Objective;
 import com.example.companion.objective.ObjectiveTracker;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.server.permissions.Permissions;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
 import java.util.Map;
@@ -23,6 +27,7 @@ import java.util.Map;
  * <pre>
  *   /companion spawn               — spawn a companion at the player's feet
  *   /companion status              — show current goal, health, hunger, objective
+ *   /companion debug               — full state dump to chat + world perception to log
  *   /companion goal <type>         — manually set the active goal (for testing)
  *   /companion objective set <obj> — set the long-term objective
  *   /companion objective status    — show objective progress
@@ -37,17 +42,17 @@ public final class CompanionCommands {
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(
-                        CommandManager.literal("companion")
-                                .requires(src -> src.hasPermissionLevel(2))
+                        Commands.literal("companion")
+                                .requires(src -> src.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 
-                                .then(CommandManager.literal("spawn")
+                                .then(Commands.literal("spawn")
                                         .executes(CompanionCommands::spawnCompanion))
 
-                                .then(CommandManager.literal("status")
+                                .then(Commands.literal("status")
                                         .executes(CompanionCommands::showStatus))
 
-                                .then(CommandManager.literal("goal")
-                                        .then(CommandManager.argument("type", StringArgumentType.word())
+                                .then(Commands.literal("goal")
+                                        .then(Commands.argument("type", StringArgumentType.word())
                                                 .suggests((ctx, builder) -> {
                                                     for (GoalType t : GoalType.values())
                                                         builder.suggest(t.name().toLowerCase());
@@ -55,21 +60,24 @@ public final class CompanionCommands {
                                                 })
                                                 .executes(CompanionCommands::setGoal)))
 
-                                .then(CommandManager.literal("remove")
+                                .then(Commands.literal("debug")
+                                        .executes(CompanionCommands::debugStatus))
+
+                                .then(Commands.literal("remove")
                                         .executes(CompanionCommands::removeAll))
 
-                                .then(CommandManager.literal("objective")
-                                        .then(CommandManager.literal("set")
-                                                .then(CommandManager.argument("objective", StringArgumentType.word())
+                                .then(Commands.literal("objective")
+                                        .then(Commands.literal("set")
+                                                .then(Commands.argument("objective", StringArgumentType.word())
                                                         .suggests((ctx, builder) -> {
                                                             for (Objective o : Objective.values())
                                                                 builder.suggest(o.name().toLowerCase());
                                                             return builder.buildFuture();
                                                         })
                                                         .executes(CompanionCommands::setObjective)))
-                                        .then(CommandManager.literal("status")
+                                        .then(Commands.literal("status")
                                                 .executes(CompanionCommands::objectiveStatus))
-                                        .then(CommandManager.literal("list")
+                                        .then(Commands.literal("list")
                                                 .executes(CompanionCommands::objectiveList)))
                 ));
     }
@@ -78,67 +86,128 @@ public final class CompanionCommands {
     // Handlers
     // ------------------------------------------------------------------
 
-    private static int spawnCompanion(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
-        ServerPlayerEntity player;
+    private static int spawnCompanion(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerPlayer player;
         try {
-            player = src.getPlayerOrThrow();
+            player = src.getPlayerOrException();
         } catch (Exception e) {
-            src.sendError(Text.literal("Must be run by a player."));
+            src.sendFailure(Component.literal("Must be run by a player."));
             return 0;
         }
 
-        ServerWorld world = player.getServerWorld();
-        CompanionEntity companion = CompanionMod.COMPANION_ENTITY_TYPE.create(world);
-        if (companion == null) {
-            src.sendError(Text.literal("Failed to create companion entity."));
-            return 0;
-        }
+        ServerLevel world = (ServerLevel) player.level();
+        CompanionEntity companion = new CompanionEntity(CompanionMod.COMPANION_ENTITY_TYPE, world);
 
-        companion.setPosition(player.getX(), player.getY(), player.getZ());
-        companion.setYaw(player.getYaw());
-        world.spawnEntity(companion);
+        companion.setPos(player.getX(), player.getY(), player.getZ());
+        companion.setYRot(player.getYRot());
+        world.addFreshEntity(companion);
 
-        src.sendFeedback(() -> Text.literal(
-                "Spawned companion [" + companion.getUuidAsString().substring(0, 8) + "]"), false);
-        CompanionMod.LOGGER.info("Spawned CompanionEntity at {}", player.getBlockPos());
+        src.sendSuccess(() -> Component.literal(
+                "Spawned companion [" + companion.getStringUUID().substring(0, 8) + "]"), false);
+        CompanionMod.LOGGER.info("Spawned CompanionEntity at {}", player.blockPosition());
         return 1;
     }
 
-    private static int showStatus(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
-        ServerWorld world = src.getWorld();
+    private static int showStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel world = src.getLevel();
 
-        List<CompanionEntity> companions = world.getEntitiesByClass(
-                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
 
         if (companions.isEmpty()) {
-            src.sendFeedback(() -> Text.literal("No companions found within 128 blocks."), false);
+            src.sendSuccess(() -> Component.literal("No companions found within 128 blocks."), false);
             return 0;
         }
 
         for (CompanionEntity c : companions) {
-            String id    = c.getUuidAsString().substring(0, 8);
+            String id    = c.getStringUUID().substring(0, 8);
             String goal  = c.getActiveGoalType().name();
             float  hp    = c.getHealth();
             int    hunger = c.getHunger();
-            src.sendFeedback(() -> Text.literal(
+            src.sendSuccess(() -> Component.literal(
                     String.format("[%s] goal=%-16s  hp=%.1f  hunger=%d", id, goal, hp, hunger)), false);
         }
         return companions.size();
     }
 
-    private static int setGoal(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
+    private static int debugStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel world = src.getLevel();
+
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
+
+        if (companions.isEmpty()) {
+            src.sendSuccess(() -> Component.literal("No companions found within 128 blocks."), false);
+            return 0;
+        }
+
+        for (CompanionEntity c : companions) {
+            String id = c.getStringUUID().substring(0, 8);
+
+            // --- header ---
+            src.sendSuccess(() -> Component.literal("=== Companion [" + id + "] ==="), false);
+
+            // --- goal ---
+            String goalStatus = c.getGoalExecutor().getActiveGoalStatus();
+            src.sendSuccess(() -> Component.literal(
+                    "  Goal:      " + c.getActiveGoalType().name() + " (" + goalStatus + ")"), false);
+
+            // --- failure reason ---
+            String fail = c.getGoalFailedReason();
+            if (fail != null && !fail.isEmpty())
+                src.sendSuccess(() -> Component.literal("  Last fail: " + fail), false);
+
+            // --- vitals + position ---
+            src.sendSuccess(() -> Component.literal(String.format(
+                    "  HP: %.1f  Hunger: %d  Pos: (%d, %d, %d)",
+                    c.getHealth(), c.getHunger(),
+                    c.blockPosition().getX(),
+                    c.blockPosition().getY(),
+                    c.blockPosition().getZ())), false);
+
+            // --- objective ---
+            com.google.gson.JsonObject obj = ObjectiveTracker.serialize(c);
+            src.sendSuccess(() -> Component.literal(
+                    "  Objective: " + obj.get("type").getAsString()
+                    + " — " + obj.get("milestone").getAsString()), false);
+
+            // --- inventory ---
+            List<net.minecraft.world.item.ItemStack> stacks = c.getNonEmptyStacks();
+            if (stacks.isEmpty()) {
+                src.sendSuccess(() -> Component.literal("  Inventory: (empty)"), false);
+            } else {
+                src.sendSuccess(() -> Component.literal("  Inventory: " +
+                        stacks.stream()
+                              .map(s -> com.example.companion.util.ScanUtils.itemName(s) + " x" + s.getCount())
+                              .collect(java.util.stream.Collectors.joining(", "))), false);
+            }
+
+            // --- last player message ---
+            String msg = c.getLastPlayerMessage();
+            if (msg != null && !msg.isEmpty())
+                src.sendSuccess(() -> Component.literal("  Last msg:  " + msg), false);
+
+            // --- dump full world state to server log ---
+            CompanionMod.LOGGER.info("[debug] WorldPerception for [{}]:\n{}",
+                    id, WorldPerception.serialize(c));
+        }
+        return companions.size();
+    }
+
+    private static int setGoal(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
         String typeStr = StringArgumentType.getString(ctx, "type");
         GoalType type = GoalType.fromString(typeStr);
 
-        ServerWorld world = src.getWorld();
-        List<CompanionEntity> companions = world.getEntitiesByClass(
-                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+        ServerLevel world = src.getLevel();
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
 
         if (companions.isEmpty()) {
-            src.sendError(Text.literal("No companions found within 128 blocks."));
+            src.sendFailure(Component.literal("No companions found within 128 blocks."));
             return 0;
         }
 
@@ -146,20 +215,20 @@ public final class CompanionCommands {
             c.setGoal(type, Map.of());
         }
         final GoalType finalType = type;
-        src.sendFeedback(() -> Text.literal(
+        src.sendSuccess(() -> Component.literal(
                 "Set goal to " + finalType + " on " + companions.size() + " companion(s)."), false);
         return companions.size();
     }
 
-    private static int removeAll(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
-        ServerWorld world = src.getWorld();
+    private static int removeAll(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel world = src.getLevel();
 
-        List<CompanionEntity> companions = world.getEntitiesByClass(
-                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
 
         companions.forEach(CompanionEntity::discard);
-        src.sendFeedback(() -> Text.literal("Removed " + companions.size() + " companion(s)."), false);
+        src.sendSuccess(() -> Component.literal("Removed " + companions.size() + " companion(s)."), false);
         return companions.size();
     }
 
@@ -167,65 +236,75 @@ public final class CompanionCommands {
     // Objective handlers
     // ------------------------------------------------------------------
 
-    private static int setObjective(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
+    private static int setObjective(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
         String objStr = StringArgumentType.getString(ctx, "objective");
         Objective obj = Objective.fromString(objStr);
 
-        ServerWorld world = src.getWorld();
-        List<CompanionEntity> companions = world.getEntitiesByClass(
-                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+        ServerLevel world = src.getLevel();
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
 
         if (companions.isEmpty()) {
-            src.sendError(Text.literal("No companions found within 128 blocks."));
+            src.sendFailure(Component.literal("No companions found within 128 blocks."));
             return 0;
         }
         for (CompanionEntity c : companions) {
             c.setObjective(obj);
         }
         final Objective finalObj = obj;
-        src.sendFeedback(() -> Text.literal(
+        src.sendSuccess(() -> Component.literal(
                 "Objective set to [" + finalObj.name() + "] — " + finalObj.displayName
                 + " on " + companions.size() + " companion(s)."), false);
         return companions.size();
     }
 
-    private static int objectiveStatus(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
-        ServerWorld world = src.getWorld();
+    private static int objectiveStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel world = src.getLevel();
 
-        List<CompanionEntity> companions = world.getEntitiesByClass(
-                CompanionEntity.class, src.getEntityAnchor().positionAt(src).expand(128), e -> true);
+        List<CompanionEntity> companions = world.getEntitiesOfClass(
+                CompanionEntity.class, searchBox(src), e -> true);
 
         if (companions.isEmpty()) {
-            src.sendFeedback(() -> Text.literal("No companions found within 128 blocks."), false);
+            src.sendSuccess(() -> Component.literal("No companions found within 128 blocks."), false);
             return 0;
         }
 
         for (CompanionEntity c : companions) {
-            String id = c.getUuidAsString().substring(0, 8);
+            String id = c.getStringUUID().substring(0, 8);
             com.google.gson.JsonObject obj = ObjectiveTracker.serialize(c);
             String type      = obj.get("type").getAsString();
             String milestone = obj.get("milestone").getAsString();
             boolean complete = obj.get("complete").getAsBoolean();
 
-            src.sendFeedback(() -> Text.literal(
+            src.sendSuccess(() -> Component.literal(
                     "[" + id + "] Objective: " + type + (complete ? " ✓" : "")), false);
-            src.sendFeedback(() -> Text.literal("  Milestone: " + milestone), false);
+            src.sendSuccess(() -> Component.literal("  Milestone: " + milestone), false);
 
             obj.getAsJsonArray("progress").forEach(e ->
-                    src.sendFeedback(() -> Text.literal("    " + e.getAsString()), false));
+                    src.sendSuccess(() -> Component.literal("    " + e.getAsString()), false));
         }
         return companions.size();
     }
 
-    private static int objectiveList(CommandContext<ServerCommandSource> ctx) {
-        ServerCommandSource src = ctx.getSource();
-        src.sendFeedback(() -> Text.literal("Available objectives:"), false);
+    private static int objectiveList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        src.sendSuccess(() -> Component.literal("Available objectives:"), false);
         for (Objective o : Objective.values()) {
-            src.sendFeedback(() -> Text.literal(
+            src.sendSuccess(() -> Component.literal(
                     "  " + o.name().toLowerCase() + " — " + o.displayName), false);
         }
         return Objective.values().length;
+    }
+
+    // ------------------------------------------------------------------
+    // Helper
+    // ------------------------------------------------------------------
+
+    private static AABB searchBox(CommandSourceStack src) {
+        Vec3 pos = src.getPosition();
+        return new AABB(pos.x - 128, pos.y - 128, pos.z - 128,
+                        pos.x + 128, pos.y + 128, pos.z + 128);
     }
 }

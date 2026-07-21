@@ -50,6 +50,9 @@ public class CompanionConfig {
     /** Radius (blocks) in which a player chat triggers a companion replan. */
     public double chatTriggerRadius = 32.0;
 
+    /** When {@code false} the companion's hunger does not drain over time. */
+    public boolean hungerEnabled = false;
+
     // ------------------------------------------------------------------
     // Singleton
     // ------------------------------------------------------------------

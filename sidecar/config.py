@@ -22,8 +22,8 @@ _CONFIG_FILE = Path(__file__).parent / "sidecar_config.json"
 _DEFAULTS: dict = {
     "stub_mode": True,
     "ollama_base_url": "http://localhost:11434",
-    "ollama_model": "qwen2.5-coder:7b",
-    "ollama_timeout": 4.0,
+    "ollama_model": "qwen3.5:latest",
+    "ollama_timeout": 120.0,
     "anthropic_model": "claude-haiku-4-5-20251001",
     "personality_file": "personality.json",
     "port": 8765,

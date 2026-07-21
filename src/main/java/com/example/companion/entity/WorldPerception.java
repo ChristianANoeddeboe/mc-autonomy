@@ -1,22 +1,24 @@
 package com.example.companion.entity;
 
+import com.example.companion.goal.GoalType;
 import com.example.companion.objective.ObjectiveTracker;
+import com.example.companion.plan.CompanionPlan;
+import com.example.companion.plan.PlanStep;
+import com.example.companion.util.ScanUtils;
 import com.google.gson.JsonArray;
-import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.World;
-import net.minecraft.world.biome.Biome;
-import net.minecraft.block.Block;
-import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.core.Holder;
+import net.minecraft.world.phys.AABB;
 
 import java.util.*;
 
@@ -38,8 +40,8 @@ public final class WorldPerception {
 
     public static JsonObject serialize(CompanionEntity entity, int radius) {
         JsonObject root = new JsonObject();
-        root.addProperty("entity_id", entity.getUuidAsString());
-        root.addProperty("tick", (int) entity.getWorld().getTime());
+        root.addProperty("entity_id", entity.getStringUUID());
+        root.addProperty("tick", (int) entity.level().getGameTime());
         root.add("world", buildWorldInfo(entity, radius));
         return root;
     }
@@ -49,29 +51,29 @@ public final class WorldPerception {
     // ------------------------------------------------------------------
 
     private static JsonObject buildWorldInfo(CompanionEntity entity, int radius) {
-        World world = entity.getWorld();
+        Level world = entity.level();
         JsonObject info = new JsonObject();
 
-        long tod = world.getTimeOfDay() % 24000;
+        long tod = world.getDayTime() % 24000;
         info.addProperty("time_of_day", timeLabel(tod));
         info.addProperty("weather", weatherLabel(world));
-        info.addProperty("biome", biomeName(world, entity.getBlockPos()));
-        info.addProperty("light_level", world.getLightLevel(entity.getBlockPos()));
+        info.addProperty("biome", biomeName(world, entity.blockPosition()));
+        info.addProperty("light_level", world.getMaxLocalRawBrightness(entity.blockPosition()));
 
         info.add("nearby_blocks",   scanBlocks(entity, radius));
         info.add("nearby_entities", scanEntities(entity, radius));
         info.add("companion",       buildCompanionState(entity));
 
         String lastMsg = entity.getLastPlayerMessage();
-        if (lastMsg != null) info.addProperty("last_player_message", lastMsg);
-        else                 info.add("last_player_message", JsonNull.INSTANCE);
+        info.addProperty("last_player_message", lastMsg != null ? lastMsg : "");
 
+        info.add("available_goals", buildAvailableGoals());
         info.addProperty("current_goal", entity.getActiveGoalType().name());
+        info.add("current_plan", buildPlanInfo(entity));
         info.add("objective", ObjectiveTracker.serialize(entity));
 
         String failReason = entity.getGoalFailedReason();
-        if (failReason != null) info.addProperty("goal_failed_reason", failReason);
-        else                    info.add("goal_failed_reason", JsonNull.INSTANCE);
+        info.addProperty("goal_failed_reason", failReason != null ? failReason : "");
 
         return info;
     }
@@ -83,7 +85,9 @@ public final class WorldPerception {
     private static JsonObject buildCompanionState(CompanionEntity entity) {
         JsonObject cs = new JsonObject();
         cs.addProperty("health", entity.getHealth());
-        cs.addProperty("hunger", entity.getHunger());
+        if (com.example.companion.CompanionConfig.get().hungerEnabled) {
+            cs.addProperty("hunger", entity.getHunger());
+        }
 
         JsonArray pos = new JsonArray();
         pos.add(Math.round(entity.getX() * 10) / 10.0);
@@ -97,11 +101,11 @@ public final class WorldPerception {
 
     private static JsonArray serializeInventory(CompanionEntity entity) {
         JsonArray arr = new JsonArray();
-        // Aggregate identical items into "item x count" strings
         Map<String, Integer> counts = new LinkedHashMap<>();
-        for (ItemStack stack : entity.getCarriedInventory()) {
+        for (int i = 0; i < entity.getCarriedInventory().getContainerSize(); i++) {
+            ItemStack stack = entity.getCarriedInventory().getItem(i);
             if (stack.isEmpty()) continue;
-            String name = Registries.ITEM.getId(stack.getItem()).getPath();
+            String name = ScanUtils.itemName(stack);
             counts.merge(name, stack.getCount(), Integer::sum);
         }
         counts.forEach((name, count) ->
@@ -114,13 +118,12 @@ public final class WorldPerception {
     // ------------------------------------------------------------------
 
     private static JsonArray scanBlocks(CompanionEntity entity, int radius) {
-        World world = entity.getWorld();
-        BlockPos origin = entity.getBlockPos();
+        Level world = entity.level();
+        BlockPos origin = entity.blockPosition();
 
-        // Collect interesting blocks, grouped by type to avoid payload bloat
         Map<String, List<int[]>> grouped = new LinkedHashMap<>();
 
-        BlockPos.Mutable mutable = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
@@ -129,19 +132,16 @@ public final class WorldPerception {
                     if (state.isAir()) continue;
                     if (!isInteresting(state)) continue;
 
-                    String name = Registries.BLOCK.getId(state.getBlock()).getPath();
+                    String name = ScanUtils.blockName(state);
                     grouped.computeIfAbsent(name, k -> new ArrayList<>())
                            .add(new int[]{dx, dy, dz});
                 }
             }
         }
 
-        // Flatten: for each type keep only the nearest occurrence, cap total entries
         JsonArray arr = new JsonArray();
-        outer:
         for (Map.Entry<String, List<int[]>> entry : grouped.entrySet()) {
             if (arr.size() >= MAX_BLOCK_ENTRIES) break;
-            // Nearest relative position
             int[] nearest = entry.getValue().stream()
                     .min(Comparator.comparingInt(r -> r[0]*r[0] + r[1]*r[1] + r[2]*r[2]))
                     .orElse(null);
@@ -152,25 +152,25 @@ public final class WorldPerception {
             obj.addProperty("count", entry.getValue().size());
             JsonArray rel = new JsonArray();
             rel.add(nearest[0]); rel.add(nearest[1]); rel.add(nearest[2]);
-            obj.add("nearest_relative", rel);
+            obj.add("relative", rel);
             arr.add(obj);
         }
         return arr;
     }
 
     private static boolean isInteresting(BlockState state) {
-        if (state.isIn(BlockTags.LOGS))         return true;
-        if (state.isIn(BlockTags.COAL_ORES))    return true;
-        if (state.isIn(BlockTags.IRON_ORES))    return true;
-        if (state.isIn(BlockTags.GOLD_ORES))    return true;
-        if (state.isIn(BlockTags.DIAMOND_ORES)) return true;
-        if (state.isIn(BlockTags.EMERALD_ORES)) return true;
-        if (state.isIn(BlockTags.REDSTONE_ORES))return true;
-        if (state.isIn(BlockTags.LAPIS_ORES))   return true;
-        if (state.isIn(BlockTags.COPPER_ORES))  return true;
-        if (state.isIn(BlockTags.BEDS))         return true;
-        if (state.isIn(BlockTags.DOORS))        return true;
-        String path = Registries.BLOCK.getId(state.getBlock()).getPath();
+        if (state.is(BlockTags.LOGS))         return true;
+        if (state.is(BlockTags.COAL_ORES))    return true;
+        if (state.is(BlockTags.IRON_ORES))    return true;
+        if (state.is(BlockTags.GOLD_ORES))    return true;
+        if (state.is(BlockTags.DIAMOND_ORES)) return true;
+        if (state.is(BlockTags.EMERALD_ORES)) return true;
+        if (state.is(BlockTags.REDSTONE_ORES))return true;
+        if (state.is(BlockTags.LAPIS_ORES))   return true;
+        if (state.is(BlockTags.COPPER_ORES))  return true;
+        if (state.is(BlockTags.BEDS))         return true;
+        if (state.is(BlockTags.DOORS))        return true;
+        String path = ScanUtils.blockName(state);
         return MISC_INTERESTING.contains(path);
     }
 
@@ -188,18 +188,17 @@ public final class WorldPerception {
     // ------------------------------------------------------------------
 
     private static JsonArray scanEntities(CompanionEntity entity, int radius) {
-        World world = entity.getWorld();
-        List<Entity> nearby = world.getOtherEntities(entity,
-                entity.getBoundingBox().expand(radius));
+        Level world = entity.level();
+        AABB box = entity.getBoundingBox().inflate(radius);
+        List<Entity> nearby = world.getEntities(entity, box);
 
         JsonArray arr = new JsonArray();
         for (Entity e : nearby) {
-            if (!(e instanceof LivingEntity living)) continue;
+            if (!(e instanceof LivingEntity)) continue;
             JsonObject obj = new JsonObject();
-            obj.addProperty("type", e.getType().getUntranslatedName());
+            obj.addProperty("type", e.getType().getDescriptionId());
             obj.addProperty("distance", Math.round(entity.distanceTo(e) * 10) / 10.0);
-            boolean hostile = (e instanceof MobEntity mob)
-                    && mob.getTarget() != null;
+            boolean hostile = (e instanceof Mob mob) && mob.getTarget() != null;
             obj.addProperty("hostile", hostile);
             arr.add(obj);
         }
@@ -210,10 +209,40 @@ public final class WorldPerception {
     // Helpers
     // ------------------------------------------------------------------
 
-    private static String biomeName(World world, BlockPos pos) {
-        RegistryEntry<Biome> entry = world.getBiome(pos);
-        return entry.getKey()
-                .map(k -> k.getValue().getPath())
+    private static JsonObject buildPlanInfo(CompanionEntity entity) {
+        CompanionPlan plan = entity.getCurrentPlan();
+        JsonObject obj = new JsonObject();
+        if (plan == null || plan.isComplete()) {
+            obj.addProperty("active", false);
+            return obj;
+        }
+        obj.addProperty("active",      true);
+        obj.addProperty("plan_id",     plan.getPlanId());
+        obj.addProperty("name",        plan.getName());
+        obj.addProperty("step",        plan.getCurrentStepIndex() + 1);
+        obj.addProperty("total_steps", plan.getStepCount());
+        PlanStep current = plan.currentStep();
+        if (current != null) {
+            obj.addProperty("current_step_goal", current.goal().name());
+            if (!current.note().isEmpty()) obj.addProperty("current_step_note", current.note());
+        }
+        return obj;
+    }
+
+    private static JsonArray buildAvailableGoals() {
+        com.example.companion.CompanionConfig cfg = com.example.companion.CompanionConfig.get();
+        JsonArray arr = new JsonArray();
+        for (GoalType type : GoalType.values()) {
+            if (type == GoalType.IDLE) continue;
+            if (type == GoalType.FIND_FOOD && !cfg.hungerEnabled) continue;
+            arr.add(type.name());
+        }
+        return arr;
+    }
+
+    private static String biomeName(Level world, BlockPos pos) {
+        return world.getBiome(pos).unwrapKey()
+                .<String>map(k -> k.identifier().getPath())
                 .orElse("unknown");
     }
 
@@ -224,7 +253,7 @@ public final class WorldPerception {
         return "night";
     }
 
-    private static String weatherLabel(World world) {
+    private static String weatherLabel(Level world) {
         if (world.isThundering()) return "thunder";
         if (world.isRaining())    return "rain";
         return "clear";

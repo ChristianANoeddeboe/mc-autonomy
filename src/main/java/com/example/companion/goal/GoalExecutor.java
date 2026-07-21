@@ -10,7 +10,8 @@ import java.util.Map;
 /**
  * Owns the currently-active {@link CompanionGoal} and ticks it every game tick.
  * When a goal completes or fails, it notifies {@link CompanionEntity} so the
- * {@link AIGoalPlanner} can request a new decision from the sidecar.
+ * {@link com.example.companion.plan.PlanExecutor} can advance the plan or
+ * request a new one from the sidecar.
  */
 public class GoalExecutor {
 
@@ -54,6 +55,18 @@ public class GoalExecutor {
         return activeType;
     }
 
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public String getActiveGoalStatus() {
+        if (activeGoal == null) return "none";
+        if (activeGoal.isFailed())   return "failed: " + activeGoal.failureReason();
+        if (activeGoal.isComplete()) return "complete";
+        if (paused)                  return "paused";
+        return "running";
+    }
+
     /** Called every game tick by {@link CompanionEntity}. */
     public void tick() {
         if (paused || activeGoal == null) return;
@@ -62,11 +75,21 @@ public class GoalExecutor {
 
         if (activeGoal.isComplete()) {
             CompanionMod.LOGGER.info("GoalExecutor: goal {} complete", activeType);
+            transitionToIdle();
             entity.reportGoalComplete();
         } else if (activeGoal.isFailed()) {
-            CompanionMod.LOGGER.warn("GoalExecutor: goal {} failed — {}", activeType, activeGoal.failureReason());
-            entity.reportGoalFailed(activeGoal.failureReason());
+            GoalType failedType = activeType;
+            String reason = activeGoal.failureReason();
+            CompanionMod.LOGGER.warn("GoalExecutor: goal {} failed — {}", failedType, reason);
+            transitionToIdle();
+            entity.reportGoalFailed(failedType, reason);
         }
+    }
+
+    private void transitionToIdle() {
+        activeGoal.reset();
+        activeType = GoalType.IDLE;
+        activeGoal = goalRegistry.get(GoalType.IDLE);
     }
 
     // ------------------------------------------------------------------
@@ -74,8 +97,10 @@ public class GoalExecutor {
     // ------------------------------------------------------------------
 
     private void registerGoals() {
+        GatherItemGoal gatherItem = new GatherItemGoal(entity);
         goalRegistry.put(GoalType.IDLE,          new IdleGoal(entity));
-        goalRegistry.put(GoalType.GATHER_WOOD,   new GatherWoodGoal(entity));
+        goalRegistry.put(GoalType.GATHER_ITEM,   gatherItem);
+        goalRegistry.put(GoalType.GATHER_WOOD,   gatherItem); // alias — uses type=log default
         goalRegistry.put(GoalType.FIND_FOOD,     new FindFoodGoal(entity));
         goalRegistry.put(GoalType.BUILD_SHELTER, new BuildShelterGoal(entity));
         goalRegistry.put(GoalType.MINE_RESOURCES,new MineResourcesGoal(entity));
@@ -83,5 +108,6 @@ public class GoalExecutor {
         goalRegistry.put(GoalType.FOLLOW_PLAYER, new FollowPlayerGoal(entity));
         goalRegistry.put(GoalType.CRAFT_ITEM,    new CraftItemGoal(entity));
         goalRegistry.put(GoalType.SLEEP,         new SleepGoal(entity));
+        goalRegistry.put(GoalType.NAVIGATE_TO,   new NavigateToGoal(entity));
     }
 }

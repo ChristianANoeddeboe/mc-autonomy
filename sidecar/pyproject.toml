@@ -1,0 +1,22 @@
+[project]
+name = "sidecar"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+dependencies = [
+    "anthropic>=0.40.0",
+    "fastapi[standard]>=0.115.0",
+    "httpx>=0.27.0",
+    "ollama>=0.4.0",
+    "pydantic>=2.9.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+]
