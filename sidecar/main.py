@@ -12,15 +12,23 @@ Environment variables
 ---------------------
 STUB_MODE=true        Skip the LLM and always return a single EXPLORE step (default: true).
                       Set to "false" for real AI decisions.
+PRIMARY_PROVIDER      Which provider serves the first attempt: "ollama" or "openrouter"
+                      (default: ollama). Anthropic is the fallback for both.
 OLLAMA_BASE_URL       Ollama server URL (default: http://localhost:11434)
-OLLAMA_MODEL          Model name (default: qwen2.5-coder:7b)
-OLLAMA_TIMEOUT        Seconds before Ollama times out and Anthropic fallback fires (default: 4)
+OLLAMA_MODEL          Model name (default: qwen3.5:latest)
+OLLAMA_TIMEOUT        Seconds before Ollama times out and the fallback fires (default: 120)
+OPENROUTER_BASE_URL   OpenRouter API root (default: https://openrouter.ai/api/v1)
+OPENROUTER_MODEL      OpenRouter model slug (default: nvidia/nemotron-3-ultra-550b-a55b:free)
+OPENROUTER_TIMEOUT    Seconds before OpenRouter times out (default: 120)
+OPENROUTER_API_KEY    Required when PRIMARY_PROVIDER=openrouter.
 ANTHROPIC_MODEL       Fallback model (default: claude-haiku-4-5-20251001)
-ANTHROPIC_API_KEY     Required when STUB_MODE=false and Ollama is unavailable.
+ANTHROPIC_API_KEY     Required when STUB_MODE=false and the primary provider is unavailable.
 
 Run with:
-    uvicorn main:app --port 8765 --reload
-    STUB_MODE=false uvicorn main:app --port 8765 --reload   # real AI
+    python main.py                         # binds CONFIG["port"] (default 8765)
+    STUB_MODE=false python main.py         # real AI
+    uvicorn main:app --port 8765 --reload  # dev reload; port must be passed explicitly,
+                                           # uvicorn ignores CONFIG and defaults to 8000
 """
 
 from __future__ import annotations
@@ -159,3 +167,12 @@ async def _generic_error(request, exc: Exception) -> JSONResponse:
         steps=[PlanStep(goal=GoalType.IDLE, note="Waiting for sidecar recovery")],
     )
     return JSONResponse(status_code=500, content=fallback.model_dump())
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Bind the port from CONFIG (sidecar_config.json → SIDECAR_PORT env → default
+    # 8765, matching CompanionConfig.sidecarPort on the mod side). Launching via
+    # `uvicorn main:app` bypasses this and falls back to uvicorn's own 8000.
+    uvicorn.run(app, host="127.0.0.1", port=CONFIG["port"])

@@ -52,3 +52,6 @@ sidecar/.pytest_cache/
 
 # local worktrees
 .worktrees/
+
+# sidecar secrets
+sidecar/.env
