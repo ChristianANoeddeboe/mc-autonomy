@@ -212,7 +212,7 @@ public final class CompanionCommands {
         }
 
         for (CompanionEntity c : companions) {
-            c.setGoal(type, Map.of());
+            c.overrideGoal(type, Map.of());
         }
         final GoalType finalType = type;
         src.sendSuccess(() -> Component.literal(

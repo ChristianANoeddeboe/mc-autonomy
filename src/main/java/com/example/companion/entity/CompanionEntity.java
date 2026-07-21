@@ -221,6 +221,15 @@ public class CompanionEntity extends PathfinderMob {
         CompanionMod.LOGGER.info("CompanionEntity: goal set to {}", type);
     }
 
+    /**
+     * Manually force a goal (from {@code /companion goal}).  Installs it as a
+     * one-step plan so the sidecar is asked for a follow-up once it finishes,
+     * rather than the companion sitting on an off-plan goal.
+     */
+    public void overrideGoal(GoalType type, Map<String, Object> params) {
+        planExecutor.overrideWithGoal(type, params, "manual command");
+    }
+
     public void reportGoalComplete() {
         planExecutor.onStepComplete();
     }

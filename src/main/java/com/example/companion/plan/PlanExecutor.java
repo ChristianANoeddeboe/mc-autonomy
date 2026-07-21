@@ -8,6 +8,8 @@ import com.example.companion.goal.GoalType;
 import com.example.companion.net.SidecarClient;
 import com.google.gson.JsonObject;
 
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -38,6 +40,13 @@ public class PlanExecutor {
     private int                ticksSinceLastRequest = 0;
     private final AtomicBoolean requestPending       = new AtomicBoolean(false);
 
+    /**
+     * Bumped whenever the plan is replaced locally (manual goal, player message,
+     * objective change).  A sidecar response carrying a stale generation is
+     * discarded so an in-flight request can't clobber a newer local decision.
+     */
+    private volatile int planGeneration = 0;
+
     public PlanExecutor(CompanionEntity entity) {
         this.entity        = entity;
         this.sidecarClient = new SidecarClient();
@@ -58,13 +67,22 @@ public class PlanExecutor {
 
         ticksSinceLastRequest++;
 
-        // No plan (or plan complete) → request one after the configured interval
-        if (currentPlan == null || currentPlan.isComplete()) {
+        // No plan, plan complete, or parked on an IDLE step → request one after
+        // the configured interval.  IDLE never self-completes, so without the
+        // third case a restored/assigned idle plan latches the companion forever.
+        if (needsNewPlan()) {
             int fallbackTicks = CompanionConfig.get().decisionIntervalSeconds * 20;
             if (ticksSinceLastRequest >= fallbackTicks) {
-                requestPlan("no-plan");
+                requestPlan(currentPlan == null ? "no-plan" : "idle-timeout");
             }
         }
+    }
+
+    /** True when the fallback timer should be allowed to fire a new plan request. */
+    private boolean needsNewPlan() {
+        if (currentPlan == null || currentPlan.isComplete()) return true;
+        PlanStep step = currentPlan.currentStep();
+        return step != null && step.goal() == GoalType.IDLE;
     }
 
     // ------------------------------------------------------------------
@@ -114,14 +132,32 @@ public class PlanExecutor {
 
     /** Called when the player sends a chat message — cancels current plan and replans. */
     public void onPlayerMessage(String message) {
-        currentPlan = null;
-        requestPlan("player-message: " + message);
+        cancelAndReplan("player-message: " + message);
     }
 
     /** Cancel the active plan and immediately request a new one (e.g. after objective changes). */
     public void cancelAndReplan(String reason) {
+        planGeneration++;
+        pendingPlan = null;
         currentPlan = null;
         requestPlan(reason);
+    }
+
+    /**
+     * Replace the active plan with a single manually-chosen step (e.g. from
+     * {@code /companion goal}).  The step runs through the normal plan lifecycle,
+     * so when it finishes the executor asks the sidecar for the next plan instead
+     * of leaving the companion on a goal the sidecar knows nothing about.
+     */
+    public void overrideWithGoal(GoalType type, Map<String, Object> params, String reason) {
+        planGeneration++;
+        pendingPlan = null;
+        CompanionPlan plan = new CompanionPlan(
+                "manual-" + planGeneration,
+                "manual: " + type.name().toLowerCase(),
+                List.of(new PlanStep(type, params, reason)));
+        CompanionMod.LOGGER.info("PlanExecutor: manual goal override [{}] — {}", reason, type);
+        applyPlan(plan);
     }
 
     /** Fire an early request in {@code delayTicks} ticks (used when no plan is active). */
@@ -168,13 +204,17 @@ public class PlanExecutor {
         ticksSinceLastRequest = 0;
         CompanionMod.LOGGER.info("PlanExecutor: requesting new plan [{}]", reason);
 
+        final int generation = planGeneration;
         JsonObject worldState = WorldPerception.serialize(entity);
         sidecarClient.postPlanAsync(worldState, plan -> {
             requestPending.set(false);
-            if (plan != null) {
-                pendingPlan = plan;
-            } else {
+            if (plan == null) {
                 CompanionMod.LOGGER.warn("PlanExecutor: null plan response — will retry");
+            } else if (generation != planGeneration) {
+                CompanionMod.LOGGER.info("PlanExecutor: discarding stale plan '{}' — superseded locally",
+                        plan.getName());
+            } else {
+                pendingPlan = plan;
             }
         });
     }
