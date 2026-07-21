@@ -18,7 +18,7 @@ OLLAMA_BASE_URL       Ollama server URL (default: http://localhost:11434)
 OLLAMA_MODEL          Model name (default: qwen3.5:latest)
 OLLAMA_TIMEOUT        Seconds before Ollama times out and the fallback fires (default: 120)
 OPENROUTER_BASE_URL   OpenRouter API root (default: https://openrouter.ai/api/v1)
-OPENROUTER_MODEL      OpenRouter model slug (default: nvidia/nemotron-3-ultra-550b-a55b:free)
+OPENROUTER_MODEL      OpenRouter model slug (default: nvidia/nemotron-3-super-120b-a12b:free)
 OPENROUTER_TIMEOUT    Seconds before OpenRouter times out (default: 120)
 OPENROUTER_API_KEY    Required when PRIMARY_PROVIDER=openrouter.
 ANTHROPIC_MODEL       Fallback model (default: claude-haiku-4-5-20251001)

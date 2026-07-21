@@ -38,7 +38,7 @@ _DEFAULTS: dict = {
     "ollama_model": "qwen3.5:latest",
     "ollama_timeout": 120.0,
     "openrouter_base_url": "https://openrouter.ai/api/v1",
-    "openrouter_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openrouter_model": "nvidia/nemotron-3-super-120b-a12b:free",
     "openrouter_timeout": 120.0,
     "anthropic_model": "claude-haiku-4-5-20251001",
     "personality_file": "personality.json",

@@ -62,7 +62,21 @@ async def _openrouter_complete(system: str, user: str) -> str:
     ) as client:
         resp = await client.post("/chat/completions", json=payload)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+
+    # OpenRouter reports upstream provider failures (rate limits, model outages) as a
+    # 200 with an {"error": {...}} envelope and no "choices", so raise_for_status()
+    # lets them through. Surface the message instead of a bare KeyError('choices').
+    if "error" in body:
+        err  = body["error"]
+        msg  = err.get("message", err) if isinstance(err, dict) else err
+        code = err.get("code") if isinstance(err, dict) else None
+        raise RuntimeError(f"OpenRouter error{f' {code}' if code else ''}: {msg}")
+
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Unexpected OpenRouter response shape: {body}") from exc
 
 
 async def _anthropic_complete(system: str, user: str) -> str:
