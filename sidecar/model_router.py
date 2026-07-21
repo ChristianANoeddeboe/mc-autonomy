@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import anthropic
 import httpx
 
-from action_parser import parse_and_validate
+from action_parser import _FALLBACK_PLAN, parse_plan
 from config import CONFIG
-from models import GoalDecision, GoalType, WorldState
-from prompt_builder import build_prompt
+from models import PlanResponse, WorldState
+from prompt_builder import build_plan_prompt
 
 logger = logging.getLogger(__name__)
 
-# Lazy Anthropic client singleton
 _anthropic_client: anthropic.AsyncAnthropic | None = None
 
 
@@ -24,9 +24,8 @@ def _get_anthropic_client() -> anthropic.AsyncAnthropic:
 
 
 async def _ollama_complete(system: str, user: str) -> str:
-    """Call Ollama's /api/chat endpoint. Raises on timeout or connection error."""
     payload = {
-        "model": CONFIG["ollama_model"],
+        "model":    CONFIG["ollama_model"],
         "messages": [
             {"role": "system", "content": system},
             {"role": "user",   "content": user},
@@ -42,36 +41,64 @@ async def _ollama_complete(system: str, user: str) -> str:
         return resp.json()["message"]["content"]
 
 
+async def _openrouter_complete(system: str, user: str) -> str:
+    """OpenAI-compatible chat completion against OpenRouter."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+
+    payload = {
+        "model":    CONFIG["openrouter_model"],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user},
+        ],
+        "stream": False,
+    }
+    async with httpx.AsyncClient(
+        base_url=CONFIG["openrouter_base_url"],
+        timeout=CONFIG["openrouter_timeout"],
+        headers={"Authorization": f"Bearer {api_key}"},
+    ) as client:
+        resp = await client.post("/chat/completions", json=payload)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
 async def _anthropic_complete(system: str, user: str) -> str:
-    """Fallback: call Anthropic API (claude-haiku for speed/cost)."""
-    client = _get_anthropic_client()
+    client  = _get_anthropic_client()
     message = await client.messages.create(
-        model=CONFIG["anthropic_model"],
-        max_tokens=256,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+        model     = CONFIG["anthropic_model"],
+        max_tokens= 1024,
+        system    = system,
+        messages  = [{"role": "user", "content": user}],
     )
     return message.content[0].text  # type: ignore[union-attr]
 
 
-async def decide(world_state: WorldState, memory_context: str) -> GoalDecision:
-    """Route the decision request: try Ollama first, fall back to Anthropic."""
-    system, user = build_prompt(world_state, memory_context)
+async def plan(world_state: WorldState, memory_context: str) -> PlanResponse:
+    """Route a plan request: primary provider first, fall back to Anthropic."""
+    system, user = build_plan_prompt(world_state, memory_context)
+    available    = world_state.world.available_goals or world_state.available_goals
+
+    if CONFIG["primary_provider"] == "openrouter":
+        primary_name  = f"OpenRouter ({CONFIG['openrouter_model']})"
+        primary_call  = _openrouter_complete
+    else:
+        primary_name  = f"Ollama ({CONFIG['ollama_model']})"
+        primary_call  = _ollama_complete
 
     try:
-        logger.debug("Trying Ollama (%s)…", CONFIG["ollama_model"])
-        raw = await _ollama_complete(system, user)
-        logger.info("Ollama responded")
+        logger.debug("Trying %s…", primary_name)
+        raw = await primary_call(system, user)
+        logger.info("%s responded", primary_name)
     except Exception as ollama_exc:
-        logger.warning("Ollama unavailable (%s) — falling back to Anthropic", ollama_exc)
+        logger.warning("%s unavailable (%s) — falling back to Anthropic", primary_name, ollama_exc)
         try:
             raw = await _anthropic_complete(system, user)
             logger.info("Anthropic fallback responded")
         except Exception as api_exc:
             logger.error("Anthropic fallback also failed: %s", api_exc)
-            return GoalDecision(
-                goal=GoalType.IDLE,
-                reason=f"All AI backends unavailable: {api_exc}",
-            )
+            return _FALLBACK_PLAN
 
-    return parse_and_validate(raw)
+    return parse_plan(raw, available_goals=available)

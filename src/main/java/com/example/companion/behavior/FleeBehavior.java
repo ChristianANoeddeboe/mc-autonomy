@@ -2,12 +2,12 @@ package com.example.companion.behavior;
 
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.Heightmap;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.List;
 
@@ -38,7 +38,7 @@ public class FleeBehavior {
             return false;
         }
 
-        if (!(entity.getWorld() instanceof ServerWorld sw)) return false;
+        if (!(entity.level() instanceof ServerLevel sw)) return false;
 
         LivingEntity threat = findNearestThreat(sw);
         if (threat == null) return false;
@@ -46,23 +46,23 @@ public class FleeBehavior {
         entity.setSprinting(true);
 
         // Vector away from the threat
-        Vec3d toThreat = threat.getPos().subtract(entity.getPos());
-        Vec3d fleeDir  = toThreat.length() > 0 ? toThreat.negate().normalize() : Vec3d.POSITIVE_X;
-        Vec3d fleeTarget = entity.getPos().add(fleeDir.multiply(FLEE_DISTANCE));
+        Vec3 toThreat = threat.position().subtract(entity.position());
+        Vec3 fleeDir  = toThreat.length() > 0 ? toThreat.scale(-1).normalize() : new Vec3(1, 0, 0);
+        Vec3 fleeTarget = entity.position().add(fleeDir.scale(FLEE_DISTANCE));
 
         int fx = (int) fleeTarget.x;
         int fz = (int) fleeTarget.z;
-        int fy = sw.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, fx, fz);
+        int fy = sw.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, fx, fz);
 
-        boolean moving = entity.getNavigation().startMovingTo(fx, fy, fz, SPRINT_SPEED);
+        boolean moving = entity.getNavigation().moveTo(fx, fy, fz, SPRINT_SPEED);
         CompanionMod.LOGGER.debug("FleeBehavior: health={} fleeing from {} nav={}",
-                entity.getHealth(), threat.getType().getUntranslatedName(), moving);
+                entity.getHealth(), threat.getType().getDescriptionId(), moving);
         return true;
     }
 
-    private LivingEntity findNearestThreat(ServerWorld sw) {
-        Box box = entity.getBoundingBox().expand(SCAN_RADIUS);
-        List<MobEntity> threats = sw.getEntitiesByClass(MobEntity.class, box,
+    private LivingEntity findNearestThreat(ServerLevel sw) {
+        AABB box = entity.getBoundingBox().inflate(SCAN_RADIUS);
+        List<Mob> threats = sw.getEntitiesOfClass(Mob.class, box,
                 mob -> mob.isAlive() && mob.getTarget() != null);
         return threats.stream()
                 .min((a, b) -> Double.compare(entity.distanceTo(a), entity.distanceTo(b)))

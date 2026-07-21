@@ -4,13 +4,13 @@ import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.CompanionGoal;
 import com.example.companion.util.ScanUtils;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
 
 import java.util.Map;
 import java.util.Set;
@@ -90,7 +90,7 @@ public class BuildShelterGoal implements CompanionGoal {
 
     @Override
     public void tick() {
-        if (!(entity.getWorld() instanceof ServerWorld sw)) return;
+        if (!(entity.level() instanceof ServerLevel sw)) return;
 
         switch (state) {
             case CHECK_MATERIALS -> {
@@ -102,9 +102,9 @@ public class BuildShelterGoal implements CompanionGoal {
                     return;
                 }
                 // Choose site 3 blocks ahead of current facing
-                siteOrigin = entity.getBlockPos().offset(entity.getHorizontalFacing(), 2);
+                siteOrigin = entity.blockPosition().relative(entity.getDirection(), 2);
                 state = State.NAVIGATE_TO_SITE;
-                entity.getNavigation().startMovingTo(
+                entity.getNavigation().moveTo(
                         siteOrigin.getX(), siteOrigin.getY(), siteOrigin.getZ(), WALK_SPEED);
             }
             case NAVIGATE_TO_SITE -> {
@@ -120,8 +120,8 @@ public class BuildShelterGoal implements CompanionGoal {
                 if (placementIndex >= SHELTER_OFFSETS.length) {
                     CompanionMod.LOGGER.info("BuildShelterGoal: shelter complete, entering");
                     // Navigate inside (centre of interior)
-                    BlockPos inside = siteOrigin.add(1, 1, 1);
-                    entity.getNavigation().startMovingTo(
+                    BlockPos inside = new BlockPos(siteOrigin.getX() + 1, siteOrigin.getY() + 1, siteOrigin.getZ() + 1);
+                    entity.getNavigation().moveTo(
                             inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5, WALK_SPEED);
                     navTicks = 0;
                     state = State.ENTER;
@@ -129,22 +129,22 @@ public class BuildShelterGoal implements CompanionGoal {
                 }
                 // Place one block per tick
                 int[] off = SHELTER_OFFSETS[placementIndex];
-                BlockPos placePos = siteOrigin.add(off[0], off[1], off[2]);
+                BlockPos placePos = new BlockPos(siteOrigin.getX() + off[0], siteOrigin.getY() + off[1], siteOrigin.getZ() + off[2]);
 
                 if (sw.getBlockState(placePos).isAir()) {
                     ItemStack material = findAndConsumeMaterial();
                     if (material == null) { failed = true; return; }
-                    Block block = Block.getBlockFromItem(material.getItem());
+                    Block block = Block.byItem(material.getItem());
                     if (block == Blocks.AIR) block = Blocks.DIRT; // fallback
-                    sw.setBlockState(placePos, block.getDefaultState());
+                    sw.setBlock(placePos, block.defaultBlockState(), 3);
                 }
                 placementIndex++;
             }
             case ENTER -> {
                 navTicks++;
                 if (navTicks > NAV_TIMEOUT) { complete = true; return; } // good enough
-                BlockPos inside = siteOrigin.add(1, 1, 1);
-                if (entity.getBlockPos().isWithinDistance(inside, 2.0)) {
+                BlockPos inside = new BlockPos(siteOrigin.getX() + 1, siteOrigin.getY() + 1, siteOrigin.getZ() + 1);
+                if (entity.blockPosition().closerThan(inside, 2.0)) {
                     entity.getNavigation().stop();
                     complete = true;
                 }
@@ -154,12 +154,12 @@ public class BuildShelterGoal implements CompanionGoal {
     }
 
     private ItemStack findAndConsumeMaterial() {
-        for (int i = 0; i < entity.getCarriedInventory().size(); i++) {
-            ItemStack s = entity.getCarriedInventory().getStack(i);
+        for (int i = 0; i < entity.getCarriedInventory().getContainerSize(); i++) {
+            ItemStack s = entity.getCarriedInventory().getItem(i);
             if (!s.isEmpty() && isBuildingMaterial(s)) {
                 ItemStack result = s.copy();
                 result.setCount(1);
-                s.decrement(1);
+                s.shrink(1);
                 return result;
             }
         }
@@ -167,7 +167,8 @@ public class BuildShelterGoal implements CompanionGoal {
     }
 
     private boolean isBuildingMaterial(ItemStack stack) {
-        return BUILDING_MATERIALS.contains(ScanUtils.itemName(stack));
+        return BUILDING_MATERIALS.contains(ScanUtils.itemName(stack))
+                || stack.is(ItemTags.LOGS);
     }
 
     @Override public boolean isComplete()   { return complete; }

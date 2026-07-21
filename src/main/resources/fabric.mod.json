@@ -11,6 +11,9 @@
 	"entrypoints": {
 		"main": [
 			"com.example.companion.CompanionMod"
+		],
+		"client": [
+			"com.example.companion.CompanionModClient"
 		]
 	},
 	"mixins": [

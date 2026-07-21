@@ -3,14 +3,16 @@ package com.example.companion.goal.goals;
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.CompanionGoal;
+import com.example.companion.util.BlockBreaker;
 import com.example.companion.util.ScanUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.block.Block;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.Heightmap;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.tags.TagKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.core.BlockPos;
 
 import java.util.Map;
 import java.util.function.Predicate;
@@ -38,12 +40,13 @@ public class MineResourcesGoal implements CompanionGoal {
     private enum State { DESCENDING, SCANNING, NAVIGATING_TO_ORE, MINING, COLLECTING }
 
     private final CompanionEntity entity;
+    private final BlockBreaker    breaker = new BlockBreaker();
     private boolean failed = false;
     private boolean complete = false;
 
     private State state = State.SCANNING;
     private Predicate<BlockState> orePredicate;
-    private Predicate<net.minecraft.item.ItemStack> itemPredicate;
+    private Predicate<net.minecraft.world.item.ItemStack> itemPredicate;
     private String targetName = "iron";
     private int targetY = TARGET_Y_IRON;
 
@@ -60,39 +63,49 @@ public class MineResourcesGoal implements CompanionGoal {
     public void start(Map<String, Object> params) {
         failed = false; complete = false; state = State.SCANNING;
         targetOre = null; ticksElapsed = 0; navTicks = 0; descentSteps = 0;
+        if (entity.level() instanceof ServerLevel sw) breaker.clear(entity.getId(), sw);
 
         targetName = (String) params.getOrDefault("target", "iron");
         setupTarget(targetName);
+
+        // Hard guard — fail immediately so the planner knows to craft a pickaxe first
+        boolean hasPickaxe = entity.getNonEmptyStacks().stream()
+                .anyMatch(s -> s.is(ItemTags.PICKAXES));
+        if (!hasPickaxe) {
+            failed = true;
+            CompanionMod.LOGGER.warn("MineResourcesGoal: no pickaxe in inventory — failing so planner can craft one");
+            return;
+        }
+
         CompanionMod.LOGGER.info("MineResourcesGoal started — target={} targetY={}", targetName, targetY);
     }
 
     private void setupTarget(String name) {
         switch (name.toLowerCase()) {
-            case "gold"     -> { orePredicate = s -> s.isIn(BlockTags.GOLD_ORES);
+            case "gold"     -> { orePredicate = s -> s.is(BlockTags.GOLD_ORES);
                                  targetY = 20; }
-            case "diamond"  -> { orePredicate = s -> s.isIn(BlockTags.DIAMOND_ORES);
+            case "diamond"  -> { orePredicate = s -> s.is(BlockTags.DIAMOND_ORES);
                                  targetY = TARGET_Y_DIAMOND; }
-            case "coal"     -> { orePredicate = s -> s.isIn(BlockTags.COAL_ORES);
+            case "coal"     -> { orePredicate = s -> s.is(BlockTags.COAL_ORES);
                                  targetY = 64; }
-            case "redstone" -> { orePredicate = s -> s.isIn(BlockTags.REDSTONE_ORES);
+            case "redstone" -> { orePredicate = s -> s.is(BlockTags.REDSTONE_ORES);
                                  targetY = -40; }
-            case "lapis"    -> { orePredicate = s -> s.isIn(BlockTags.LAPIS_ORES);
+            case "lapis"    -> { orePredicate = s -> s.is(BlockTags.LAPIS_ORES);
                                  targetY = 0; }
-            case "copper"   -> { orePredicate = s -> s.isIn(BlockTags.COPPER_ORES);
+            case "copper"   -> { orePredicate = s -> s.is(BlockTags.COPPER_ORES);
                                  targetY = 48; }
-            case "emerald"  -> { orePredicate = s -> s.isIn(BlockTags.EMERALD_ORES);
+            case "emerald"  -> { orePredicate = s -> s.is(BlockTags.EMERALD_ORES);
                                  targetY = 100; }
-            default         -> { orePredicate = s -> s.isIn(BlockTags.IRON_ORES);
+            default         -> { orePredicate = s -> s.is(BlockTags.IRON_ORES);
                                  targetY = TARGET_Y_IRON; }
         }
-        String ore = targetName + "_ore";
         itemPredicate = s -> ScanUtils.itemName(s).contains(targetName + "_ore")
                 || ScanUtils.itemName(s).contains("raw_" + targetName);
     }
 
     @Override
     public void tick() {
-        if (!(entity.getWorld() instanceof ServerWorld sw)) return;
+        if (!(entity.level() instanceof ServerLevel sw)) return;
 
         ticksElapsed++;
         if (ticksElapsed >= SEARCH_TIMEOUT_TICKS) {
@@ -114,10 +127,16 @@ public class MineResourcesGoal implements CompanionGoal {
             case SCANNING -> {
                 targetOre = ScanUtils.findNearestBlock(entity, SCAN_RADIUS, orePredicate);
                 if (targetOre != null) {
-                    navTicks = 0;
-                    state = State.NAVIGATING_TO_ORE;
-                    entity.getNavigation().startMovingTo(
-                            targetOre.getX(), targetOre.getY(), targetOre.getZ(), WALK_SPEED);
+                    int depthDelta = entity.getBlockY() - targetOre.getY();
+                    if (depthDelta > 4) {
+                        // Ore is deeper than pathfinding can reach — dig down first
+                        state = State.DESCENDING;
+                    } else {
+                        navTicks = 0;
+                        state = State.NAVIGATING_TO_ORE;
+                        entity.getNavigation().moveTo(
+                                targetOre.getX(), targetOre.getY(), targetOre.getZ(), WALK_SPEED);
+                    }
                 } else {
                     state = State.DESCENDING;
                 }
@@ -125,32 +144,34 @@ public class MineResourcesGoal implements CompanionGoal {
             case DESCENDING -> {
                 int currentY = entity.getBlockY();
                 if (currentY <= targetY + 5) {
-                    // At target depth — switch to scanning
                     state = State.SCANNING;
                     return;
                 }
-                // Dig one block down (break block at feet and one below)
-                BlockPos feet = entity.getBlockPos();
-                BlockPos below = feet.down();
-                if (!sw.getBlockState(below).isAir()) {
-                    sw.breakBlock(below, false, entity);
+                // Dig straight down — break the floor block with timing, then fall naturally
+                entity.getNavigation().stop();
+                BlockPos floor = entity.blockPosition().below();
+                ItemStack tool = BlockBreaker.bestToolFor(entity.getNonEmptyStacks(), sw.getBlockState(floor));
+                boolean broke = breaker.tick(entity.getId(), sw, floor, tool, entity);
+                if (broke) {
+                    // Also clear the block 2 below to create a 2-tall shaft
+                    BlockPos deeper = floor.below();
+                    ItemStack tool2 = BlockBreaker.bestToolFor(entity.getNonEmptyStacks(), sw.getBlockState(deeper));
+                    breaker.tick(entity.getId(), sw, deeper, tool2, entity);
+                    descentSteps++;
+                    if (descentSteps % 8 == 0) state = State.SCANNING;
                 }
-                if (!sw.getBlockState(feet).isAir()) {
-                    sw.breakBlock(feet, false, entity);
-                }
-                // Step diagonally: move south + down each cycle
-                entity.getNavigation().startMovingTo(
-                        entity.getX(), currentY - 1, entity.getZ() + 1, WALK_SPEED);
-                descentSteps++;
-                if (descentSteps % 8 == 0) state = State.SCANNING; // scan every 8 steps
             }
             case NAVIGATING_TO_ORE -> {
                 navTicks++;
                 if (navTicks > NAV_TIMEOUT_TICKS || targetOre == null) {
+                    state = State.DESCENDING; return;
+                }
+                if (!entity.level().getBlockState(targetOre).is(getOreTag())) {
                     state = State.SCANNING; return;
                 }
-                if (!entity.getWorld().getBlockState(targetOre).isIn(getOreTag())) {
-                    state = State.SCANNING; return;
+                // Pathfinding gave up quickly → can't route there, dig down instead
+                if (navTicks > 5 && entity.getNavigation().isDone()) {
+                    state = State.DESCENDING; return;
                 }
                 if (ScanUtils.isReachable(entity, targetOre, ORE_REACH)) {
                     entity.getNavigation().stop();
@@ -158,12 +179,16 @@ public class MineResourcesGoal implements CompanionGoal {
                 }
             }
             case MINING -> {
-                if (targetOre == null || !entity.getWorld().getBlockState(targetOre).isIn(getOreTag())) {
+                if (targetOre == null || !entity.level().getBlockState(targetOre).is(getOreTag())) {
+                    breaker.clear(entity.getId(), sw);
                     state = State.COLLECTING; return;
                 }
-                sw.breakBlock(targetOre, true, entity);
-                ScanUtils.collectNearbyItems(entity, 3.0);
-                state = State.SCANNING; // scan for more ore
+                ItemStack tool = BlockBreaker.bestToolFor(entity.getNonEmptyStacks(), sw.getBlockState(targetOre));
+                boolean broke = breaker.tick(entity.getId(), sw, targetOre, tool, entity);
+                if (broke) {
+                    ScanUtils.collectNearbyItems(entity, 3.0);
+                    state = State.SCANNING;
+                }
             }
             case COLLECTING -> {
                 ScanUtils.collectNearbyItems(entity, 3.0);
@@ -188,12 +213,17 @@ public class MineResourcesGoal implements CompanionGoal {
 
     @Override public boolean isComplete()   { return complete; }
     @Override public boolean isFailed()     { return failed; }
-    @Override public String failureReason() { return "Could not find " + targetName + " ore"; }
+    @Override public String failureReason() {
+        boolean hasPickaxe = entity.getNonEmptyStacks().stream().anyMatch(s -> s.is(ItemTags.PICKAXES));
+        return hasPickaxe ? "Could not find " + targetName + " ore"
+                          : "No pickaxe in inventory — craft one before mining";
+    }
 
     @Override
     public void reset() {
         failed = false; complete = false; state = State.SCANNING;
         targetOre = null; ticksElapsed = 0; navTicks = 0; descentSteps = 0;
+        if (entity.level() instanceof ServerLevel sw) breaker.clear(entity.getId(), sw);
         entity.getNavigation().stop();
     }
 }

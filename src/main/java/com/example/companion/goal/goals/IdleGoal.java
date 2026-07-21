@@ -6,9 +6,11 @@ import com.example.companion.goal.CompanionGoal;
 import java.util.Map;
 
 /**
- * IDLE — does nothing.  Complete condition: next planner tick.
- * This goal never self-completes; the planner fires a new request after the
- * fallback timer, at which point a real goal is assigned.
+ * IDLE — does nothing.
+ *
+ * <p>Never self-completes.  {@code PlanExecutor.tick()} treats a plan parked on
+ * an IDLE step as replannable, so the fallback timer fires a new plan request
+ * and a real goal gets assigned.
  */
 public class IdleGoal implements CompanionGoal {
 

@@ -3,7 +3,7 @@ package com.example.companion.goal.goals;
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.CompanionGoal;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.world.entity.player.Player;
 
 import java.util.Map;
 
@@ -35,7 +35,7 @@ public class FollowPlayerGoal implements CompanionGoal {
 
     @Override
     public void tick() {
-        PlayerEntity target = entity.getWorld().getClosestPlayer(entity, MAX_DISTANCE);
+        Player target = entity.level().getNearestPlayer(entity, MAX_DISTANCE);
         if (target == null) {
             failed = true;
             entity.getNavigation().stop();
@@ -51,7 +51,7 @@ public class FollowPlayerGoal implements CompanionGoal {
         }
 
         if (dist > START_MOVING_DISTANCE) {
-            entity.getNavigation().startMovingTo(target, WALK_SPEED);
+            entity.getNavigation().moveTo(target, WALK_SPEED);
         } else if (dist <= CLOSE_DISTANCE) {
             entity.getNavigation().stop();
         }

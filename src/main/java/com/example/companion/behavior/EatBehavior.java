@@ -2,9 +2,9 @@ package com.example.companion.behavior;
 
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.FoodComponent;
-import net.minecraft.item.ItemStack;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.Comparator;
 
@@ -39,11 +39,11 @@ public class EatBehavior {
         ItemStack food = findBestFood();
         if (food == null) return false;
 
-        FoodComponent fc = food.get(DataComponentTypes.FOOD);
+        FoodProperties fc = food.get(DataComponents.FOOD);
         if (fc == null) return false;
 
         int restored = fc.nutrition();
-        food.decrement(1);
+        food.shrink(1);
         entity.restoreHunger(restored);
         cooldownTicks = EAT_COOLDOWN_TICKS;
         CompanionMod.LOGGER.info("EatBehavior: ate {} (+{} hunger), hunger now {}",
@@ -58,9 +58,9 @@ public class EatBehavior {
      */
     private ItemStack findBestFood() {
         return entity.getNonEmptyStacks().stream()
-                .filter(s -> s.get(DataComponentTypes.FOOD) != null)
+                .filter(s -> s.get(DataComponents.FOOD) != null)
                 .max(Comparator.comparingInt(s -> {
-                    FoodComponent fc = s.get(DataComponentTypes.FOOD);
+                    FoodProperties fc = s.get(DataComponents.FOOD);
                     return fc == null ? 0 : fc.nutrition();
                 }))
                 .orElse(null);

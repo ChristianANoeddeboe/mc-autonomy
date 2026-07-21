@@ -2,18 +2,18 @@ package com.example.companion.behavior;
 
 import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
-import net.minecraft.entity.mob.CreeperEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.Heightmap;
+import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.List;
 
 /**
  * Reactive behavior: sprint perpendicular to a lit creeper to avoid the explosion.
  *
- * <p>Trigger: ignited {@link CreeperEntity} within {@value TRIGGER_DISTANCE} blocks.
+ * <p>Trigger: ignited {@link Creeper} within {@value TRIGGER_DISTANCE} blocks.
  * <p>Action: sprint 90° sideways relative to the creeper's approach vector.
  */
 public class DodgeBehavior {
@@ -30,32 +30,32 @@ public class DodgeBehavior {
 
     /** @return true if this behavior is active */
     public boolean tick() {
-        if (!(entity.getWorld() instanceof ServerWorld sw)) return false;
+        if (!(entity.level() instanceof ServerLevel sw)) return false;
 
-        CreeperEntity lit = findLitCreeper(sw);
+        Creeper lit = findLitCreeper(sw);
         if (lit == null) return false;
 
         entity.setSprinting(true);
 
         // Perpendicular dodge: rotate the threat vector 90° around Y
-        Vec3d toCreeper = lit.getPos().subtract(entity.getPos());
+        Vec3 toCreeper = lit.position().subtract(entity.position());
         // Rotate 90° in the XZ plane: (x,z) → (-z,x)
-        Vec3d perp = new Vec3d(-toCreeper.z, 0, toCreeper.x).normalize();
-        Vec3d dodgeTarget = entity.getPos().add(perp.multiply(DODGE_DISTANCE));
+        Vec3 perp = new Vec3(-toCreeper.z, 0, toCreeper.x).normalize();
+        Vec3 dodgeTarget = entity.position().add(perp.scale(DODGE_DISTANCE));
 
         int dx = (int) dodgeTarget.x;
         int dz = (int) dodgeTarget.z;
-        int dy = sw.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, dx, dz);
+        int dy = sw.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, dx, dz);
 
-        entity.getNavigation().startMovingTo(dx, dy, dz, SPRINT_SPEED);
+        entity.getNavigation().moveTo(dx, dy, dz, SPRINT_SPEED);
         CompanionMod.LOGGER.debug("DodgeBehavior: dodging creeper at distance {}",
                 Math.round(entity.distanceTo(lit) * 10) / 10.0);
         return true;
     }
 
-    private CreeperEntity findLitCreeper(ServerWorld sw) {
-        Box box = entity.getBoundingBox().expand(TRIGGER_DISTANCE);
-        List<CreeperEntity> creepers = sw.getEntitiesByClass(CreeperEntity.class, box,
+    private Creeper findLitCreeper(ServerLevel sw) {
+        AABB box = entity.getBoundingBox().inflate(TRIGGER_DISTANCE);
+        List<Creeper> creepers = sw.getEntitiesOfClass(Creeper.class, box,
                 c -> c.isIgnited());
         return creepers.isEmpty() ? null : creepers.get(0);
     }

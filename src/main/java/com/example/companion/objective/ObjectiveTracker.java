@@ -4,7 +4,7 @@ import com.example.companion.entity.CompanionEntity;
 import com.example.companion.util.ScanUtils;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -169,7 +169,7 @@ public final class ObjectiveTracker {
     // ------------------------------------------------------------------
 
     private static Progress evalSurviveDays(CompanionEntity entity) {
-        long totalTicks = entity.getWorld().getTimeOfDay();
+        long totalTicks = entity.level().getDayTime();
         int days = (int)(totalTicks / 24000L);
         boolean complete = days >= 100;
         List<String> notes = List.of("Days survived: " + days + "/100");

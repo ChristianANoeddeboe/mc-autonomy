@@ -4,9 +4,9 @@ import com.example.companion.CompanionMod;
 import com.example.companion.entity.CompanionEntity;
 import com.example.companion.goal.CompanionGoal;
 import com.example.companion.util.ScanUtils;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
 
 import java.util.Map;
 
@@ -48,27 +48,27 @@ public class SleepGoal implements CompanionGoal {
     @Override
     public void tick() {
         // Morning check — complete regardless of sleep state
-        long tod = entity.getWorld().getTimeOfDay() % 24000;
+        long tod = entity.level().getDayTime() % 24000;
         if (tod < 1000 || tod > 23000) {
-            if (entity.isSleeping()) entity.wakeUp();
+            if (entity.isSleeping()) entity.stopSleeping();
             complete = true;
             entity.getNavigation().stop();
             return;
         }
 
-        if (!(entity.getWorld() instanceof ServerWorld sw)) return;
+        if (!(entity.level() instanceof ServerLevel sw)) return;
 
         switch (state) {
             case SCANNING -> {
                 bedPos = ScanUtils.findNearestBlock(entity, SCAN_RADIUS,
-                        blockState -> blockState.isIn(BlockTags.BEDS));
+                        blockState -> blockState.is(BlockTags.BEDS));
                 if (bedPos == null) {
                     CompanionMod.LOGGER.info("SleepGoal: no bed found — failing");
                     failed = true;
                 } else {
                     navTicks = 0;
                     state = State.NAVIGATING;
-                    entity.getNavigation().startMovingTo(
+                    entity.getNavigation().moveTo(
                             bedPos.getX(), bedPos.getY(), bedPos.getZ(), WALK_SPEED);
                 }
             }
@@ -79,12 +79,12 @@ public class SleepGoal implements CompanionGoal {
                     failed = true;
                     return;
                 }
-                if (!entity.getWorld().getBlockState(bedPos).isIn(BlockTags.BEDS)) {
+                if (!entity.level().getBlockState(bedPos).is(BlockTags.BEDS)) {
                     state = State.SCANNING; return; // bed removed
                 }
                 if (ScanUtils.isReachable(entity, bedPos, BED_REACH)) {
                     entity.getNavigation().stop();
-                    entity.sleep(bedPos);
+                    entity.startSleeping(bedPos);
                     state = State.SLEEPING;
                     CompanionMod.LOGGER.info("SleepGoal: sleeping at {}", bedPos);
                 }
@@ -105,7 +105,7 @@ public class SleepGoal implements CompanionGoal {
 
     @Override
     public void reset() {
-        if (entity.isSleeping()) entity.wakeUp();
+        if (entity.isSleeping()) entity.stopSleeping();
         failed = false; complete = false; state = State.SCANNING;
         bedPos = null; navTicks = 0;
         entity.getNavigation().stop();

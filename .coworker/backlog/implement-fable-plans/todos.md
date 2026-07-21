@@ -1,0 +1,30 @@
+# Todos
+
+- [x] #1 Commit the main-tree work (branch `refactor/plan-executor-architecture`, `0698e66`)
+- [x] #2 Audit plans 01, 02, 03, 20, 21 against the code that exists
+- [x] #3 Audit the remaining 18 plans for accidental overlap
+- [x] #4 Record status per plan in `docs/plans/README.md`
+- [x] #5 Run a baseline build + test (build green, 16 sidecar tests pass)
+- [ ] #27 Run one manual in-game session against the baseline
+- [ ] #28 Land the worktree branch before committing main-tree work so the audited README does not fork
+- [ ] #6 Run `/cw-plan` for plan 02 (texture + biped model remainder)
+- [ ] #22 Run `/cw-plan` for plan 03 (despawn-prevention + `lastPlayerMessage`, via attachments)
+- [ ] #7 Implement child plans 02 and 03
+- [ ] #8 Manual in-game verification of the must-fix remainder
+- [ ] #9 Run `/cw-plan` for 21 and implement it before the rest of the clean-base tier
+- [ ] #23 Run `/cw-plan` for 20 (five remaining coverage/CI gaps)
+- [ ] #24 Run `/cw-plan` for 22 and 23
+- [ ] #10 Implement child plans for the clean-base tier
+- [ ] #11 Manual in-game verification after the rename
+- [ ] #25 Capture a token/cost baseline for the current prompt path before touching 05
+- [ ] #12 Run `/cw-plan` for 05, 06, 07, 08, 09
+- [ ] #13 Implement child plans for the robustness tier
+- [ ] #14 Manual in-game test with sidecar killed mid-session
+- [ ] #15 Run `/cw-plan` for 10, 11, 12, 13
+- [ ] #26 Run `/cw-plan` for the 04 + 14 polish remainder as one combined child plan
+- [ ] #16 Implement child plans for the AI-layer tier
+- [ ] #17 Manual in-game session judging conversational + planning quality
+- [ ] #18 Re-prioritize 15–19 after Phase 4 lands
+- [ ] #19 Run `/cw-plan` for each surviving gameplay plan (15 before 16 and 18)
+- [ ] #20 Implement child plans for the gameplay tier
+- [ ] #21 Manual in-game verification per gameplay plan

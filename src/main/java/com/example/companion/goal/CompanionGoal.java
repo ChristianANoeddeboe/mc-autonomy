@@ -20,7 +20,7 @@ public interface CompanionGoal {
     /** @return true when the goal has failed and cannot continue. */
     boolean isFailed();
 
-    /** Human-readable reason returned to {@link AIGoalPlanner} on failure. */
+    /** Human-readable reason reported to the sidecar on failure. */
     String failureReason();
 
     /** Reset internal state so the goal can be reused. */

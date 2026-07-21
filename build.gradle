@@ -35,7 +35,10 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-	
+
+	// Log4j2 core — provided by Minecraft at runtime, needed here for compile-time access
+	// to programmatically add a dedicated companion log file appender.
+	compileOnly 'org.apache.logging.log4j:log4j-core:2.22.1'
 }
 
 processResources {

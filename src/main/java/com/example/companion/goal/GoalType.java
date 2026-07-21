@@ -5,7 +5,8 @@ package com.example.companion.goal;
  * Must stay in sync with the Python sidecar's GoalType enum.
  */
 public enum GoalType {
-    GATHER_WOOD,
+    GATHER_ITEM,
+    GATHER_WOOD,    // kept for backward compatibility — maps to GatherItemGoal(type=log)
     FIND_FOOD,
     BUILD_SHELTER,
     MINE_RESOURCES,
@@ -13,6 +14,7 @@ public enum GoalType {
     FOLLOW_PLAYER,
     CRAFT_ITEM,
     SLEEP,
+    NAVIGATE_TO,
     IDLE;
 
     /** Case-insensitive parse with IDLE as fallback. */
