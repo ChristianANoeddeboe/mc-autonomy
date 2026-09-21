@@ -54,10 +54,9 @@ public final class MockLlmClient implements LlmClient {
 			return CompletableFuture.failedFuture(new IllegalStateException("mock-fail"));
 		}
 		String respond = matchRule(user);
-		return (respond == null)
-			? CompletableFuture.completedFuture(null)
-			: CompletableFuture.supplyAsync(() -> respond,
-				CompletableFuture.delayedExecutor(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS));
+		if (respond == null) return CompletableFuture.completedFuture(null);
+		return CompletableFuture.supplyAsync(() -> respond,
+			CompletableFuture.delayedExecutor(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS));
 	}
 
 	@Override public CompletableFuture<Boolean> probe() {

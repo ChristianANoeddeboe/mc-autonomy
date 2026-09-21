@@ -2,6 +2,7 @@ package dev.mcc.goal;
 
 import dev.mcc.entity.CompanionEntity;
 import dev.mcc.goal.tasks.CraftGoal;
+import dev.mcc.goal.tasks.DeclineGoal;
 import dev.mcc.goal.tasks.GatherGoal;
 import dev.mcc.goal.tasks.GiveGoal;
 import dev.mcc.goal.tasks.ModeGoal;
@@ -22,6 +23,7 @@ public final class GoalFactory {
 			case FOLLOW, STAY, GUARD -> new ModeGoal(spec, e);
 			case SHELTER -> new ShelterGoal(spec, e);
 			case WAIT -> new WaitGoal(spec);
+			case DECLINE -> new DeclineGoal(spec);
 			default -> new UnimplementedGoal(spec);
 		};
 	}

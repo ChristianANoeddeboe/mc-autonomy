@@ -31,7 +31,7 @@ public final class CompanionBrain {
 	private final CompanionConfig.LlmGroup cfg;
 	private LlmClient client;
 	private LlmState state = LlmState.OFF;
-	private final ConcurrentLinkedQueue<String> results = new ConcurrentLinkedQueue<>();
+	private final ConcurrentLinkedQueue<ResultWrapper> results = new ConcurrentLinkedQueue<>();
 	private CompletableFuture<String> inFlight;
 	private CompletableFuture<Boolean> probeInFlight;
 	private int failures;
@@ -47,10 +47,19 @@ public final class CompanionBrain {
 
 	LlmClient createClient() {
 		return switch (cfg.mode) {
-			case "mock" -> MockLlmClient.of(mockScriptDefault());
+			case "mock" -> mkMock();
 			case "http" -> new HttpLlmClient(cfg);
 			default -> new OffLlmClient();
 		};
+	}
+
+	/** Build a mock client from the configured mockScript file (fallback to inline default). */
+	private MockLlmClient mkMock() {
+		java.nio.file.Path p = java.nio.file.Path.of("config/mc-companion", cfg.mockScript);
+		if (java.nio.file.Files.exists(p)) {
+			return new MockLlmClient(cfg);
+		}
+		return MockLlmClient.of(mockScriptDefault());
 	}
 
 	private static String mockScriptDefault() {
@@ -70,7 +79,7 @@ public final class CompanionBrain {
 	public void setMode(String mode) {
 		this.client.shutdown();
 		this.client = switch (mode) {
-			case "mock" -> MockLlmClient.of(mockScriptDefault());
+			case "mock" -> mkMock();
 			case "off" -> new OffLlmClient();
 			default -> new HttpLlmClient(cfg);
 		};
@@ -104,16 +113,28 @@ public final class CompanionBrain {
 	}
 
 	public void tick(CompanionEntity e) {
-		// 1) drain completions (server thread)
-		String raw;
-		while ((raw = results.poll()) != null) {
-			apply(raw);
+		// 1) drain completions (server thread). A ResultWrapper carries
+		//    success-text OR a FAILURE sentinel so failures are distinguishable
+		//    from an empty queue (ConcurrentLinkedQueue rejects null).
+		ResultWrapper r;
+		while ((r = results.poll()) != null) {
+			if (r.failure) {
+				fail();
+			} else {
+				apply(r.text);
+			}
 		}
-		// 2) detect dead in-flight (handled via future callbacks pushing null)
-		// 3) periodic
+		// 2) periodic
 		if (state != LlmState.OFF && e.tickCount % cfg.periodicTicks == 0) {
 			requestIfIdle();
 		}
+	}
+
+	/** Async result envelope pushed from the (worker) future, drained here. */
+	static final class ResultWrapper {
+		final boolean failure;
+		final String text;
+		ResultWrapper(boolean failure, String text) { this.failure = failure; this.text = text; }
 	}
 
 	/** Apply a raw LLM reply: validate and replace the executor queue. */
@@ -191,8 +212,14 @@ public final class CompanionBrain {
 		JsonObject payload = WorldStateBuilder.build(entity, "PLAYER_MESSAGE", pendingIntent);
 		MccMod.LOGGER.info("[MCC][brain] sending payload {} bytes", payload.toString().length());
 		inFlight = client.complete(systemPrompt(), "PAYLOAD " + payload);
-		inFlight.thenAccept(raw -> {
-			if (raw != null) results.add(raw);
+		inFlight.handle((raw, err) -> {
+			if (err == null && raw != null) {
+				results.add(new ResultWrapper(false, raw));
+			} else {
+				// async failure/timeout -> count it (results drained on server thread)
+				results.add(new ResultWrapper(true, null));
+			}
+			return raw;
 		});
 		MccMod.LOGGER.info("[MCC][llm] request trigger=PLAYER_MESSAGE");
 	}
