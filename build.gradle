@@ -35,7 +35,20 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+	// JUnit 5 for unit tests (pure Java, no game boot where noted in the plan)
+	testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 	
+}
+
+test {
+	useJUnitPlatform()
+}
+
+// Let the smoke script pipe console commands into the server stdin.
+tasks.named("runServer") {
+	standardInput = System.in
 }
 
 processResources {
