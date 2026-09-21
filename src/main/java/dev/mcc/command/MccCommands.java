@@ -7,6 +7,8 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import dev.mcc.CompanionManager;
 import dev.mcc.CompanionRegistry;
+import dev.mcc.MccMod;
+import dev.mcc.chat.ChatParser;
 import dev.mcc.config.CompanionConfig;
 import dev.mcc.entity.CompanionEntity;
 import dev.mcc.goal.GoalSpec;
@@ -186,8 +188,12 @@ public final class MccCommands {
 
 	private static int say(CommandContext<CommandSourceStack> ctx) {
 		String text = StringArgumentType.getString(ctx, "text");
-		companionFor(ctx).ifPresentOrElse(c -> c.brain().entity().say(text),
-			() -> ctx.getSource().sendFailure(Component.literal("[MCC] no companion")));
+		companionFor(ctx).ifPresentOrElse(c -> {
+			String stripped = ChatParser.strip(text);
+			MccMod.LOGGER.info("[MCC][hear] console: {} (intent={})", stripped,
+				ChatParser.parse(stripped).type());
+			c.brain().onPlayerMessage(ownerFor(ctx), stripped);
+		}, () -> ctx.getSource().sendFailure(Component.literal("[MCC] no companion")));
 		return 1;
 	}
 
@@ -203,19 +209,17 @@ public final class MccCommands {
 
 	private static int llm(CommandContext<CommandSourceStack> ctx) {
 		String mode = StringArgumentType.getString(ctx, "mode");
-		CompanionBrain.LlmState st = switch (mode) {
-			case "on" -> CompanionBrain.LlmState.CONNECTED;
-			case "mock" -> CompanionBrain.LlmState.MOCK;
-			case "off" -> CompanionBrain.LlmState.OFF;
-			default -> null;
-		};
-		if (st == null) {
+		if (!dirSwitch(mode)) {
 			ctx.getSource().sendFailure(Component.literal("[MCC] llm mode: on|mock|off"));
 			return 0;
 		}
-		companionFor(ctx).ifPresent(c -> c.brain().setState(st));
+		companionFor(ctx).ifPresent(c -> c.brain().setMode(mode));
 		ctx.getSource().sendSuccess(() -> Component.literal("[MCC] llm=" + mode), false);
 		return 1;
+	}
+
+	private static boolean dirSwitch(String m) {
+		return m.equals("on") || m.equals("mock") || m.equals("off");
 	}
 
 	private static int debugGive(CommandContext<CommandSourceStack> ctx) {

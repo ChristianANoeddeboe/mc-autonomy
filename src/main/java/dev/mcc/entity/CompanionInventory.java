@@ -127,4 +127,16 @@ public final class CompanionInventory {
 
 	/** Slots count for status display: "<filled>/<size>" uses freeSlots()/size(). */
 	public int filledSlots() { return size() - freeSlots(); }
+
+	/** Item -> total count, for payload / planning. */
+	public java.util.Map<Item, Integer> summary() {
+		java.util.Map<Item, Integer> m = new java.util.HashMap<>();
+		for (int i = 0; i < size(); i++) {
+			ItemStack st = container.getItem(i);
+			if (!st.isEmpty()) {
+				m.merge(st.getItem(), st.getCount(), Integer::sum);
+			}
+		}
+		return m;
+	}
 }
