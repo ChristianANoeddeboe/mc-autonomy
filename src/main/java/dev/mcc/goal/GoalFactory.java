@@ -1,8 +1,12 @@
 package dev.mcc.goal;
 
 import dev.mcc.entity.CompanionEntity;
-import dev.mcc.goal.tasks.MoveToGoal;
+import dev.mcc.goal.tasks.CraftGoal;
+import dev.mcc.goal.tasks.GatherGoal;
+import dev.mcc.goal.tasks.GiveGoal;
 import dev.mcc.goal.tasks.ModeGoal;
+import dev.mcc.goal.tasks.MoveToGoal;
+import dev.mcc.goal.tasks.ShelterGoal;
 import dev.mcc.goal.tasks.WaitGoal;
 
 /** Maps a GoalSpec to a concrete GoalTask. */
@@ -12,7 +16,11 @@ public final class GoalFactory {
 	public static GoalTask create(GoalSpec spec, CompanionEntity e) {
 		return switch (spec.type()) {
 			case MOVE_TO -> new MoveToGoal(spec, e);
+			case GATHER -> new GatherGoal(spec, e);
+			case GIVE -> new GiveGoal(spec, e);
+			case CRAFT -> new CraftGoal(spec, e);
 			case FOLLOW, STAY, GUARD -> new ModeGoal(spec, e);
+			case SHELTER -> new ShelterGoal(spec, e);
 			case WAIT -> new WaitGoal(spec);
 			default -> new UnimplementedGoal(spec);
 		};

@@ -82,7 +82,7 @@ public final class MccCommands {
 	private static LiteralArgumentBuilder<CommandSourceStack> debugOp() {
 		LiteralArgumentBuilder<CommandSourceStack> debug = Commands.literal("debug");
 		debug.then(Commands.literal("give")
-			.then(Commands.argument("item", StringArgumentType.string())
+			.then(Commands.argument("item", StringArgumentType.word())
 				.then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
 					.executes(MccCommands::debugGive))));
 		debug.then(Commands.literal("goto")
@@ -259,10 +259,31 @@ public final class MccCommands {
 			ctx.getSource().sendFailure(Component.literal("[MCC] unknown goal type " + type));
 			return 0;
 		}
-		GoalSpec spec = new GoalSpec(gt, java.util.Map.of(), params);
+		// params: comma/space separated key=value, e.g. "block=minecraft:oak_log count=3"
+		java.util.Map<String, Object> map = new java.util.HashMap<>();
+		for (String kv : params.split("[,\\s]+")) {
+			if (kv.isEmpty()) continue;
+			String[] parts = kv.split("=", 2);
+			String key = parts[0].trim();
+			String val = parts.length > 1 ? parts[1].trim() : "";
+			if (key.isEmpty()) continue;
+			map.put(key, parseScalar(val));
+		}
+		GoalSpec spec = new GoalSpec(gt, map, "debug:" + type.toLowerCase());
 		companionFor(ctx).ifPresent(c -> c.executor().push(spec));
+		LogDebugGoal(type, map);
 		ctx.getSource().sendSuccess(() -> Component.literal("[MCC] debug goal " + type), true);
 		return 1;
+	}
+
+	private static Object parseScalar(String v) {
+		try { return Integer.parseInt(v); } catch (NumberFormatException ignore) { }
+		try { return Double.parseDouble(v); } catch (NumberFormatException ignore) { }
+		return v;
+	}
+
+	private static void LogDebugGoal(String type, java.util.Map<String, Object> map) {
+		dev.mcc.MccMod.LOGGER.info("[MCC][debug] goal {} params={}", type, map);
 	}
 
 	private static int debugHealth(CommandContext<CommandSourceStack> ctx) {

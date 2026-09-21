@@ -13,7 +13,7 @@ import java.util.function.Consumer;
  * SurvivalReflex preempts urgent tasks. Completion events go to a listener
  * (the Brain subscribes to trigger re-planning).
  */
-public final class GoalExecutor {
+public class GoalExecutor {
 	private final CompanionEntity entity;
 	private final List<GoalSpec> queue = new ArrayList<>();
 	private GoalTask current;
@@ -66,7 +66,7 @@ public final class GoalExecutor {
 		if (current == null) {
 			if (!queue.isEmpty()) {
 				GoalSpec next = queue.remove(0);
-				current = GoalFactory.create(next, entity);
+				current = createGoal(next);
 				current.start(entity);
 			} else if (resumedAfterUrgent != null) {
 				current = resumedAfterUrgent;
@@ -89,6 +89,11 @@ public final class GoalExecutor {
 		if (listener != null) {
 			listener.accept(lastResult);
 		}
+	}
+
+	/** Instantiate a task for a spec; overridable for tests. */
+	protected GoalTask createGoal(GoalSpec spec) {
+		return GoalFactory.create(spec, entity);
 	}
 
 	private void stopCurrent() {

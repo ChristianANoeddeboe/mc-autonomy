@@ -20,6 +20,11 @@ public final class CompanionTicker {
 		CompanionConfig cfg = CompanionConfig.get();
 		if (!e.isAlive() || e.level().isClientSide()) return;
 
+		if (e.tickCount % 100 == 0) {
+			dev.mcc.MccMod.LOGGER.info("[MCC][alive] t={} pos={} hp={} alive={} removed={}",
+				e.tickCount, e.blockPosition(), e.getHealth(), e.isAlive(), e.isRemoved());
+		}
+
 		ServerLevel level = (ServerLevel) e.level();
 
 		// 1) hunger
