@@ -20,11 +20,6 @@ public final class CompanionTicker {
 		CompanionConfig cfg = CompanionConfig.get();
 		if (!e.isAlive() || e.level().isClientSide()) return;
 
-		if (e.tickCount % 100 == 0) {
-			dev.mcc.MccMod.LOGGER.info("[MCC][alive] t={} pos={} hp={} alive={} removed={}",
-				e.tickCount, e.blockPosition(), e.getHealth(), e.isAlive(), e.isRemoved());
-		}
-
 		ServerLevel level = (ServerLevel) e.level();
 
 		// 1) hunger
@@ -37,7 +32,10 @@ public final class CompanionTicker {
 			default -> {}
 		}
 
-		// 2) executor
+		// 2) survival reflex (may preempt the current goal)
+		dev.mcc.survival.SurvivalReflexApplier.tick(e);
+
+		// 3) executor
 		e.executor().tick();
 
 		// 3) ongoing mode behaviour (FOLLOW/STAY/GUARD drift when no goal running)
