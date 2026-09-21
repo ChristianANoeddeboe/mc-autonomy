@@ -22,7 +22,10 @@ public final class CompanionTicker {
 
 		ServerLevel level = (ServerLevel) e.level();
 
-		// 1) hunger
+		// 1) item pickup
+		ItemPickup.tick(e);
+
+		// 2) hunger
 		boolean hasFood = e.inventory().bestFood().isPresent();
 		TickResult h = e.hunger().tick(e.tickCount, hasFood);
 		switch (h) {
