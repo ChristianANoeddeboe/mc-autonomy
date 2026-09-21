@@ -45,7 +45,7 @@ public final class WorldStateBuilder {
 		o.addProperty("foodUnits", e.inventory().foodUnits());
 
 		o.add("inventory", inventory(e));
-		o.add("nearbyBlocks", new JsonArray());
+		o.add("nearbyBlocks", nearbyBlocks(e, level));
 		o.add("nearbyEntities", nearbyEntities(e, level));
 
 		e.owner().ifPresent(own -> {
@@ -100,6 +100,41 @@ public final class WorldStateBuilder {
 				i.addProperty("item", itemId(en.getKey()));
 				i.addProperty("count", en.getValue());
 				arr.add(i);
+			});
+		return arr;
+	}
+
+	/** Aggregate non-trivial nearby blocks by type (for the model to plan gathers). */
+	private static JsonArray nearbyBlocks(CompanionEntity e, ServerLevel level) {
+		JsonArray arr = new JsonArray();
+		int r = CompanionConfig.get().llm.payloadBlockRadius;
+		java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+		java.util.Map<String, int[]> nearest = new java.util.HashMap<>();
+		var p = e.blockPosition();
+		for (net.minecraft.core.BlockPos bp : net.minecraft.core.BlockPos.betweenClosed(
+				p.offset(-r, -6, -r), p.offset(r, 6, r))) {
+			net.minecraft.world.level.block.state.BlockState st = level.getBlockState(bp);
+			if (st.isAir()) continue;
+			String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()) != null
+				? net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).toString() : "";
+			if (id.isEmpty() || id.equals("minecraft:air")) continue;
+			// skip common terrain noise
+			if (id.equals("minecraft:dirt") || id.equals("minecraft:stone")
+				|| id.equals("minecraft:grass_block") || id.equals("minecraft:bedrock")
+				|| id.endsWith("deepslate")) continue;
+			counts.merge(id, 1, Integer::sum);
+			int[] np = nearest.get(id);
+			if (np == null) { nearest.put(id, new int[]{bp.getX(), bp.getY(), bp.getZ()}); }
+		}
+		counts.entrySet().stream()
+			.limit(16)
+			.forEach(en -> {
+				JsonObject j = new JsonObject();
+				j.addProperty("block", en.getKey());
+				j.addProperty("count", en.getValue());
+				int[] np = nearest.get(en.getKey());
+				j.addProperty("nearest", np[0] + "," + np[1] + "," + np[2]);
+				arr.add(j);
 			});
 		return arr;
 	}
