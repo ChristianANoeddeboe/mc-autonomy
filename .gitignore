@@ -47,3 +47,6 @@ sidecar/.venv/
 sidecar/venv/
 sidecar/memory.json
 sidecar/sidecar_config.json
+/logs/
+/logs/
+/run/logs/
